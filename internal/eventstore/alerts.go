@@ -62,7 +62,7 @@ func listStrategies(db queryer, armedOnly bool) ([]signals.StoredStrategy, error
 		return nil, err
 	}
 	defer rows.Close()
-	var out []signals.StoredStrategy
+	out := make([]signals.StoredStrategy, 0)
 	for rows.Next() {
 		var strategy signals.StoredStrategy
 		var definition, report string
@@ -206,7 +206,7 @@ func scanDecision(row *sql.Row) (signals.Decision, bool, error) {
 }
 
 func scanDecisions(rows *sql.Rows) ([]signals.Decision, error) {
-	var out []signals.Decision
+	out := make([]signals.Decision, 0)
 	for rows.Next() {
 		var payload string
 		if err := rows.Scan(&payload); err != nil {
@@ -237,7 +237,7 @@ func (s *SQLiteStore) ListInvitations() ([]signals.Invitation, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []signals.Invitation
+	out := make([]signals.Invitation, 0)
 	for rows.Next() {
 		var inv signals.Invitation
 		var used sql.NullTime
@@ -307,7 +307,7 @@ func (s *SQLiteStore) ListSubscribers() ([]signals.Subscriber, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []signals.Subscriber
+	out := make([]signals.Subscriber, 0)
 	for rows.Next() {
 		var sub signals.Subscriber
 		if err := rows.Scan(&sub.ID, &sub.TelegramChatID, &sub.DisplayName, &sub.Active, &sub.TermsVersion, &sub.AdultConfirmed, &sub.ExpiresAt, &sub.CreatedAt); err != nil {

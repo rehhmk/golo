@@ -46,6 +46,7 @@ const fieldLabels: Record<string, string> = {
 };
 const operatorLabels: Record<string, string> = { eq: '=', gte: '≥', lte: '≤' };
 const pct = (value = 0) => `${(value * 100).toFixed(1)}%`;
+const asArray = <T,>(value: unknown): T[] => Array.isArray(value) ? value as T[] : [];
 
 export const StrategyLab: React.FC = () => {
   const [token, setToken] = useState(() => sessionStorage.getItem('golo-admin-token') || '');
@@ -85,8 +86,12 @@ export const StrategyLab: React.FC = () => {
         request('strategies'), request('signals'), request('performance'), request('settings'),
         request('invitations'), request('subscribers'), request('provider-health'),
       ]);
-      setStrategies(strategyRows); setSignals(signalRows); setPerformance(perf);
-      setSettings(currentSettings); setInvitations(inviteRows); setSubscribers(subscriberRows);
+      setStrategies(asArray<StoredStrategy>(strategyRows));
+      setSignals(asArray<Signal>(signalRows));
+      setPerformance(perf);
+      setSettings(currentSettings);
+      setInvitations(asArray<Invitation>(inviteRows));
+      setSubscribers(asArray<Subscriber>(subscriberRows));
       setProviderHealth(health);
     } catch (error) { setMessage(String(error)); }
   }, [request, token]);
