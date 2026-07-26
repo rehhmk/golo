@@ -35,7 +35,7 @@ func (fe *FeatureEngine) ExtractFeatures(state domain.MatchState) (map[string]fl
 	feats["yellow_cards_home"] = float64(state.YellowCards.Home)
 	feats["yellow_cards_away"] = float64(state.YellowCards.Away)
 
-	// Time deltas (seconds since event, default to max match duration 5400 if none)
+	// Time deltas (seconds since the last event of each kind, capped — see maxDeltaSeconds)
 	feats["last_goal_delta_sec"] = fe.deltaSec(state.ClockSeconds, state.LastGoalSecond)
 	feats["last_shot_delta_sec"] = fe.deltaSec(state.ClockSeconds, state.LastShotSecond)
 	feats["last_shot_on_target_delta_sec"] = fe.deltaSec(state.ClockSeconds, state.LastShotOnTargetSec)
@@ -112,13 +112,32 @@ func (fe *FeatureEngine) ExtractFeatures(state domain.MatchState) (map[string]fl
 	return feats, snapshot, nil
 }
 
+// maxDeltaSeconds caps every "seconds since the last X" feature at the longest
+// rolling window the model reasons over.
+//
+// The cap is not cosmetic. These features enter the model linearly, so an
+// uncapped value keeps pushing the logit long after the signal has saturated:
+// a match with no shot on record used to report 5400 seconds, which at the 5m
+// horizon's -0.002 coefficient alone contributes -10.8 and drives the
+// probability to the 0.001 floor no matter what else is happening on the
+// pitch. Ten minutes without a shot and eighty minutes without one mean the
+// same thing to a model whose widest window is ten minutes, so the feature
+// saturates there.
+const maxDeltaSeconds = 600.0
+
 func (fe *FeatureEngine) deltaSec(current int, last *int) float64 {
 	if last == nil {
-		return 5400.0 // Default maximum duration if no event occurred
+		// Nothing of this kind observed yet — either it genuinely hasn't
+		// happened, or Golo joined the match already in progress. Both are
+		// "not recently", which is what the cap represents.
+		return maxDeltaSeconds
 	}
 	diff := current - *last
 	if diff < 0 {
 		return 0
+	}
+	if float64(diff) > maxDeltaSeconds {
+		return maxDeltaSeconds
 	}
 	return float64(diff)
 }

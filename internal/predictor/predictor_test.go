@@ -61,3 +61,34 @@ func TestPredictor_Predict(t *testing.T) {
 		t.Errorf("expected HIGH confidence, got %s", pred.ConfidenceBand)
 	}
 }
+
+// Nested horizons must satisfy p5m <= p10m <= pFT, and the constraint must be
+// applied by capping the shorter horizons rather than inflating the full-time
+// one — pFT is the North-Star metric and the only time-aware horizon.
+func TestPredictHorizonsAreMonotonic(t *testing.T) {
+	pred := NewPredictorFromArtifact(MultiHorizonArtifact{
+		ModelVersion: "test",
+		Horizons: map[string]HorizonModel{
+			// A 10m model that would otherwise far exceed the full-time one.
+			"5m":        {Intercept: 0.0, Calibration: domain.CalibrationParams{Type: "platt", A: -1}},
+			"10m":       {Intercept: 2.0, Calibration: domain.CalibrationParams{Type: "platt", A: -1}},
+			"full_time": {Intercept: -4.0, Calibration: domain.CalibrationParams{Type: "platt", A: -1}},
+		},
+	})
+
+	state := domain.MatchState{MatchID: "m1", ClockSeconds: 5200, Status: domain.MatchStatusLive}
+	out, err := pred.Predict(state, map[string]float64{}, 1.0)
+	if err != nil {
+		t.Fatalf("Predict: %v", err)
+	}
+
+	p := out.Probabilities
+	if !(p.GoalNext5m <= p.GoalNext10m && p.GoalNext10m <= p.GoalBeforeFullTime) {
+		t.Fatalf("horizons not monotonic: 5m=%v 10m=%v FT=%v", p.GoalNext5m, p.GoalNext10m, p.GoalBeforeFullTime)
+	}
+
+	// The full-time horizon must not have been dragged upward to satisfy it.
+	if p.GoalBeforeFullTime > 0.05 {
+		t.Fatalf("GoalBeforeFullTime = %v, want the time-aware model's own low value, not one inflated by the shorter horizons", p.GoalBeforeFullTime)
+	}
+}
