@@ -133,3 +133,45 @@ func newStat(participantID int64, developerName string, value float64) statistic
 	s.Data.Value = value
 	return s
 }
+
+func TestRateLimitCooldownSuppressesRequestsAndBacksOff(t *testing.T) {
+	p := New("test-key", "https://example.invalid", nil)
+
+	if _, ok := p.inCooldown(); ok {
+		t.Fatal("a fresh provider is in cooldown")
+	}
+
+	p.enterCooldown()
+	wait, ok := p.inCooldown()
+	if !ok {
+		t.Fatal("expected cooldown after a rate limit")
+	}
+	if wait > minRateLimitCooldown {
+		t.Fatalf("first cooldown = %s, want at most %s", wait, minRateLimitCooldown)
+	}
+
+	// Repeated limits escalate the backoff.
+	p.enterCooldown()
+	if p.cooldown != 2*minRateLimitCooldown {
+		t.Fatalf("second cooldown = %s, want %s", p.cooldown, 2*minRateLimitCooldown)
+	}
+
+	// A success means the quota refilled — clear the backoff entirely.
+	p.recordSuccess()
+	if _, ok := p.inCooldown(); ok {
+		t.Fatal("cooldown survived a successful call")
+	}
+	if p.cooldown != 0 {
+		t.Fatalf("cooldown = %s after success, want 0", p.cooldown)
+	}
+}
+
+func TestRateLimitCooldownIsBounded(t *testing.T) {
+	p := New("test-key", "https://example.invalid", nil)
+	for i := 0; i < 20; i++ {
+		p.enterCooldown()
+	}
+	if p.cooldown != maxRateLimitCooldown {
+		t.Fatalf("cooldown = %s, want it capped at %s", p.cooldown, maxRateLimitCooldown)
+	}
+}

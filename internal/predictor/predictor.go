@@ -30,12 +30,48 @@ type Predictor struct {
 	artifact   MultiHorizonArtifact
 	calibrator *calibration.Calibrator
 	sequence   int
+
+	// hazard is set when the artifact declares modelType "poisson_hazard",
+	// in which case it replaces the per-horizon logistic models entirely.
+	hazard *HazardArtifact
 }
+
+// modelTypeProbe reads just enough of an artifact to tell the two model
+// families apart before decoding it properly.
+type modelTypeProbe struct {
+	ModelType string `json:"modelType"`
+}
+
+const modelTypeHazard = "poisson_hazard"
 
 func NewPredictor(artifactPath string) (*Predictor, error) {
 	data, err := os.ReadFile(artifactPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read model artifact: %w", err)
+	}
+
+	var probe modelTypeProbe
+	if err := json.Unmarshal(data, &probe); err != nil {
+		return nil, fmt.Errorf("failed to parse model artifact JSON: %w", err)
+	}
+
+	if probe.ModelType == modelTypeHazard {
+		var hazard HazardArtifact
+		if err := json.Unmarshal(data, &hazard); err != nil {
+			return nil, fmt.Errorf("failed to parse hazard model artifact JSON: %w", err)
+		}
+		if hazard.BaseGoalsPer90 <= 0 {
+			return nil, fmt.Errorf("hazard model artifact has non-positive baseGoalsPer90 %v", hazard.BaseGoalsPer90)
+		}
+		return &Predictor{
+			artifact: MultiHorizonArtifact{
+				ModelVersion:   hazard.ModelVersion,
+				FeatureVersion: hazard.FeatureVersion,
+				TrainedUntil:   hazard.TrainedUntil,
+			},
+			calibrator: calibration.NewCalibrator(),
+			hazard:     &hazard,
+		}, nil
 	}
 
 	var artifact MultiHorizonArtifact
@@ -50,6 +86,18 @@ func NewPredictor(artifactPath string) (*Predictor, error) {
 	}, nil
 }
 
+// NewPredictorFromHazard builds a predictor directly from a hazard artifact.
+func NewPredictorFromHazard(hazard HazardArtifact) *Predictor {
+	return &Predictor{
+		artifact: MultiHorizonArtifact{
+			ModelVersion:   hazard.ModelVersion,
+			FeatureVersion: hazard.FeatureVersion,
+		},
+		calibrator: calibration.NewCalibrator(),
+		hazard:     &hazard,
+	}
+}
+
 func NewPredictorFromArtifact(artifact MultiHorizonArtifact) *Predictor {
 	return &Predictor{
 		artifact:   artifact,
@@ -61,7 +109,10 @@ func NewPredictorFromArtifact(artifact MultiHorizonArtifact) *Predictor {
 func (p *Predictor) Predict(state domain.MatchState, feats map[string]float64, qualityScore float64) (domain.Prediction, error) {
 	p.sequence++
 
-	if state.Status == domain.MatchStatusFinished || state.ClockSeconds >= 5400 {
+	// Only a finished match has no chance of a further goal. A match past the
+	// 90th minute is still being played — treating the regulation whistle as
+	// the end zeroed out every stoppage-time prediction.
+	if state.Status == domain.MatchStatusFinished {
 		return domain.Prediction{
 			MatchID:         state.MatchID,
 			AsOfMatchSecond: state.ClockSeconds,
@@ -81,9 +132,20 @@ func (p *Predictor) Predict(state domain.MatchState, feats map[string]float64, q
 		}, nil
 	}
 
-	p5m := p.evaluateHorizon("5m", feats)
-	p10m := p.evaluateHorizon("10m", feats)
-	pFT := p.evaluateHorizon("full_time", feats)
+	var p5m, p10m, pFT float64
+	if p.hazard != nil {
+		// The hazard model produces correctly ordered, time-aware horizons
+		// directly from a single intensity, so it needs no monotonicity fix-up.
+		lambda := p.hazard.intensity(feats)
+		remaining := remainingSeconds(state)
+		p5m = goalProbability(lambda, 300, remaining)
+		p10m = goalProbability(lambda, 600, remaining)
+		pFT = goalProbability(lambda, remaining, remaining)
+	} else {
+		p5m = p.evaluateHorizon("5m", feats)
+		p10m = p.evaluateHorizon("10m", feats)
+		pFT = p.evaluateHorizon("full_time", feats)
+	}
 
 	// Enforce monotonicity: p5m <= p10m <= pFT.
 	//

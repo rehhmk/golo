@@ -12,8 +12,7 @@ import {
 import { EvaluationMetrics, MatchUpdate } from '../types';
 import { API_BASE_URL } from '../config';
 import { PageHeader } from './PageHeader';
-import { cn } from '@/lib/utils';
-
+import { awayLabel, cn, homeLabel } from "@/lib/utils"
 interface EvaluationDashboardProps {
   matches: MatchUpdate[];
 }
@@ -38,7 +37,7 @@ function computeFactors(m: MatchUpdate): Factor[] {
     const xgDiff = stats10m.home.xg - stats10m.away.xg;
     factors.push({
       label: 'xG acumulado (10m)',
-      detail: `${m.state.homeTeamId} ${stats10m.home.xg.toFixed(2)} · ${m.state.awayTeamId} ${stats10m.away.xg.toFixed(2)}`,
+      detail: `${homeLabel(m.state)} ${stats10m.home.xg.toFixed(2)} · ${awayLabel(m.state)} ${stats10m.away.xg.toFixed(2)}`,
       direction: xgDiff > 0.05 ? 'up' : xgDiff < -0.05 ? 'down' : 'neutral',
       magnitude: Math.abs(xgDiff) * 3,
     });
@@ -280,7 +279,7 @@ export const EvaluationDashboard: React.FC<EvaluationDashboardProps> = ({ matche
                       : 'text-slate-500 hover:text-slate-300'
                   )}
                 >
-                  {m.state.homeTeamId} × {m.state.awayTeamId}
+                  {homeLabel(m.state)} × {awayLabel(m.state)}
                 </button>
               ))}
             </div>

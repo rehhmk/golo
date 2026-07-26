@@ -1,0 +1,23 @@
+{
+  "modelVersion": "hazard_v1.0.0",
+  "featureVersion": "v1.0.0",
+  "modelType": "poisson_hazard",
+  "baseGoalsPer90": 2.75,
+  "coefficients": {
+    "shots_10m_total": 0.06,
+    "shots_on_target_10m_total": 0.12,
+    "corners_10m_total": 0.03,
+    "dangerous_attacks_10m_total": 0.008,
+    "xg_10m_total": 0.9
+  },
+  "redCardCoefficient": 0.15,
+  "minMultiplier": 0.35,
+  "maxMultiplier": 4.0,
+  "trainedUntil": "",
+  "calibration": {
+    "type": "identity",
+    "a": 0.0,
+    "b": 0.0
+  },
+  "notes": "Untrained prior, not a fitted model. baseGoalsPer90 is the long-run league average combined-goal rate; the coefficients are plausible intensity multipliers, not estimates from data. Replace via ml/src/train_baseline.py once a real historical dataset exists."
+}

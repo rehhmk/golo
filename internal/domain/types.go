@@ -110,6 +110,14 @@ type MatchState struct {
 	HomeTeamID string `json:"homeTeamId"`
 	AwayTeamID string `json:"awayTeamId"`
 
+	// Human-readable names for display. Providers that identify teams and
+	// competitions by opaque numeric IDs supply these separately; when a
+	// provider has no separate name the ID doubles as the label, so consumers
+	// should fall back to the ID rather than render an empty string.
+	HomeTeamName    string `json:"homeTeamName,omitempty"`
+	AwayTeamName    string `json:"awayTeamName,omitempty"`
+	CompetitionName string `json:"competitionName,omitempty"`
+
 	// Competition context.
 	CompetitionID string `json:"competitionId"`
 	SeasonID      string `json:"seasonId,omitempty"`
@@ -223,6 +231,9 @@ type Match struct {
 	SeasonID        string      `json:"seasonId,omitempty"`
 	HomeTeamID      string      `json:"homeTeamId"`
 	AwayTeamID      string      `json:"awayTeamId"`
+	HomeTeamName    string      `json:"homeTeamName,omitempty"`
+	AwayTeamName    string      `json:"awayTeamName,omitempty"`
+	CompetitionName string      `json:"competitionName,omitempty"`
 	ScheduledAt     time.Time   `json:"scheduledAt"`
 	Status          MatchStatus `json:"status"`
 	CreatedAt       time.Time   `json:"createdAt"`
@@ -278,5 +289,9 @@ func InitialState(match Match) MatchState {
 		CompetitionID: match.CompetitionID,
 		SeasonID:      match.SeasonID,
 		StateVersion:  0,
+
+		HomeTeamName:    match.HomeTeamName,
+		AwayTeamName:    match.AwayTeamName,
+		CompetitionName: match.CompetitionName,
 	}
 }

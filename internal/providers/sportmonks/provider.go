@@ -3,6 +3,7 @@ package sportmonks
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"sort"
@@ -73,6 +74,12 @@ type fixtureDTO struct {
 	Periods      []periodDTO      `json:"periods"`
 	Scores       []scoreDTO       `json:"scores"`
 	Statistics   []statisticDTO   `json:"statistics"`
+	League       *leagueDTO       `json:"league"`
+}
+
+type leagueDTO struct {
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
 }
 
 // periodDTO carries the live match clock. The period with ticking=true is the
@@ -203,7 +210,7 @@ func (p *Provider) Name() string {
 // inplayIncludes pulls everything Golo needs for one poll tick in a single
 // request: team identities, the live clock, the authoritative score, the
 // cumulative statistics that feed the rolling windows, and the event list.
-const inplayIncludes = "participants;periods;scores;statistics.type;events"
+const inplayIncludes = "participants;periods;scores;statistics.type;events;league"
 
 func (p *Provider) ListLiveMatches(ctx context.Context) ([]domain.Match, error) {
 	if wait, ok := p.inCooldown(); ok {
@@ -241,9 +248,18 @@ func (p *Provider) ListLiveMatches(ctx context.Context) ([]domain.Match, error) 
 		p.cache[matchID] = f
 
 		home, away := participantIDs(f.Participants)
+		homeName, awayName := participantNames(f.Participants)
 		scheduledAt, _ := time.Parse(startingAtLayout, f.StartingAt)
 
+		competitionName := ""
+		if f.League != nil {
+			competitionName = f.League.Name
+		}
+
 		matches = append(matches, domain.Match{
+			HomeTeamName:    homeName,
+			AwayTeamName:    awayName,
+			CompetitionName: competitionName,
 			ID:              matchID,
 			Provider:        p.Name(),
 			ProviderMatchID: strconv.FormatInt(f.ID, 10),
@@ -554,6 +570,21 @@ func participantIDs(participants []participantDTO) (home, away string) {
 			home = id
 		case "away":
 			away = id
+		}
+	}
+	return home, away
+}
+
+// participantNames returns the display names for each side. SportMonks
+// identifies teams by numeric ID, which is meaningless to a reader — without
+// these the UI shows "609 vs 15522" instead of the actual fixture.
+func participantNames(participants []participantDTO) (home, away string) {
+	for _, participant := range participants {
+		switch participant.Meta.Location {
+		case "home":
+			home = participant.Name
+		case "away":
+			away = participant.Name
 		}
 	}
 	return home, away
