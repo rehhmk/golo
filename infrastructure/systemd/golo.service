@@ -1,0 +1,22 @@
+# Scaffold for the GCE e2-micro deploy (context/Golo_Blueprint_MVP.md §17.2).
+# Not installed by anything tonight — copy to /etc/systemd/system/golo.service
+# on the VM once it exists, after `make build` has produced bin/golo and it's
+# been copied to /opt/golo/bin/golo alongside a real .env (chmod 0600).
+
+[Unit]
+Description=Golo Core
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=golo
+WorkingDirectory=/opt/golo
+ExecStart=/opt/golo/bin/golo
+Restart=always
+RestartSec=5
+EnvironmentFile=/opt/golo/.env
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

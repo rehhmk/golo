@@ -1,0 +1,61 @@
+{
+  "modelVersion": "baseline_v1.0.0",
+  "featureVersion": "v1.0.0",
+  "trainedUntil": "2026-07-25",
+  "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "horizons": {
+    "5m": {
+      "horizonSeconds": 300,
+      "intercept": -2.15,
+      "coefficients": {
+        "shots_5m_total": 0.28,
+        "shots_on_target_5m_total": 0.42,
+        "xg_5m_total": 1.65,
+        "xg_momentum_surge": 0.85,
+        "corners_5m_total": 0.12,
+        "red_cards_diff": 0.35,
+        "last_shot_delta_sec": -0.002
+      },
+      "calibration": {
+        "type": "platt",
+        "a": -1.0,
+        "b": 0.0
+      }
+    },
+    "10m": {
+      "horizonSeconds": 600,
+      "intercept": -1.45,
+      "coefficients": {
+        "shots_10m_total": 0.22,
+        "shots_on_target_10m_total": 0.38,
+        "xg_10m_total": 1.40,
+        "xg_momentum_surge": 0.70,
+        "corners_10m_total": 0.10,
+        "red_cards_diff": 0.40,
+        "last_shot_delta_sec": -0.0015
+      },
+      "calibration": {
+        "type": "platt",
+        "a": -1.0,
+        "b": 0.0
+      }
+    },
+    "full_time": {
+      "horizonSeconds": 5400,
+      "intercept": 0.35,
+      "coefficients": {
+        "match_second": -0.0008,
+        "score_diff": -0.15,
+        "red_cards_diff": 0.50,
+        "xg_10m_total": 0.80,
+        "shots_on_target_10m_total": 0.18,
+        "xg_momentum_surge": 0.50
+      },
+      "calibration": {
+        "type": "platt",
+        "a": -1.0,
+        "b": 0.0
+      }
+    }
+  }
+}

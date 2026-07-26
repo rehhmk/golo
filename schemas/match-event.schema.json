@@ -1,0 +1,43 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://golo.internal/schemas/match-event.schema.json",
+  "title": "MatchEvent",
+  "description": "Mirrors internal/domain/events.go MatchEvent + EventType. See context/Golo_Blueprint_MVP.md §7.4.",
+  "type": "object",
+  "required": [
+    "eventId", "matchId", "provider", "providerEventId", "eventType",
+    "matchSecond", "period", "providerTime", "receivedAt", "processedAt", "schemaVersion"
+  ],
+  "properties": {
+    "eventId": { "type": "string" },
+    "matchId": { "type": "string" },
+    "provider": { "type": "string" },
+    "providerEventId": { "type": "string" },
+    "eventType": {
+      "type": "string",
+      "enum": [
+        "GOAL", "OWN_GOAL", "GOAL_DISALLOWED", "PENALTY_SCORED", "PENALTY_MISSED",
+        "YELLOW_CARD", "SECOND_YELLOW", "RED_CARD",
+        "SUBSTITUTION",
+        "SHOT", "SHOT_ON_TARGET", "SHOT_BLOCKED", "SHOT_OFF_TARGET",
+        "CORNER", "FREE_KICK", "THROW_IN", "GOAL_KICK",
+        "FOUL", "OFFSIDE",
+        "PERIOD_START", "PERIOD_END", "HALF_TIME", "FULL_TIME", "EXTRA_TIME_START", "EXTRA_TIME_END",
+        "VAR_REVIEW", "REVISION",
+        "DANGEROUS_ATTACK", "INJURY", "UNKNOWN"
+      ]
+    },
+    "teamId": { "type": ["string", "null"] },
+    "playerId": { "type": ["string", "null"] },
+    "matchSecond": { "type": "integer", "minimum": 0 },
+    "period": { "type": "integer", "minimum": 0 },
+    "providerTime": { "type": "string", "format": "date-time" },
+    "receivedAt": { "type": "string", "format": "date-time" },
+    "processedAt": { "type": "string", "format": "date-time" },
+    "xg": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+    "positionX": { "type": ["number", "null"] },
+    "positionY": { "type": ["number", "null"] },
+    "attributes": {},
+    "schemaVersion": { "type": "integer", "minimum": 1 }
+  }
+}

@@ -1,0 +1,75 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://golo.internal/schemas/match-state.schema.json",
+  "title": "MatchState",
+  "description": "Mirrors internal/domain/types.go MatchState. See context/Golo_Blueprint_MVP.md §10.1.",
+  "type": "object",
+  "required": [
+    "matchId", "status", "period", "clockSeconds", "score", "redCards",
+    "yellowCards", "substitutions", "provider", "providerUpdatedAt",
+    "receivedAt", "feedLagMs", "stateVersion", "homeTeamId", "awayTeamId", "competitionId"
+  ],
+  "properties": {
+    "matchId": { "type": "string" },
+    "status": {
+      "type": "string",
+      "enum": ["SCHEDULED", "LIVE", "HALF_TIME", "PAUSED", "FINISHED", "CANCELLED", "STALE", "ERROR"]
+    },
+    "period": { "type": "integer", "minimum": 0 },
+    "clockSeconds": { "type": "integer", "minimum": 0 },
+    "score": {
+      "type": "object",
+      "required": ["home", "away"],
+      "properties": { "home": { "type": "integer", "minimum": 0 }, "away": { "type": "integer", "minimum": 0 } }
+    },
+    "redCards": { "$ref": "#/definitions/cardState" },
+    "yellowCards": { "$ref": "#/definitions/cardState" },
+    "substitutions": { "$ref": "#/definitions/cardState" },
+    "windows": {
+      "type": ["object", "null"],
+      "additionalProperties": { "$ref": "#/definitions/windowStats" }
+    },
+    "provider": { "type": "string" },
+    "providerUpdatedAt": { "type": "string", "format": "date-time" },
+    "receivedAt": { "type": "string", "format": "date-time" },
+    "feedLagMs": { "type": "integer" },
+    "stateVersion": { "type": "integer", "minimum": 0 },
+    "lastGoalSecond": { "type": ["integer", "null"] },
+    "lastShotSecond": { "type": ["integer", "null"] },
+    "lastShotOnTargetSecond": { "type": ["integer", "null"] },
+    "lastCardSecond": { "type": ["integer", "null"] },
+    "lastSubstitutionSecond": { "type": ["integer", "null"] },
+    "homeTeamId": { "type": "string" },
+    "awayTeamId": { "type": "string" },
+    "competitionId": { "type": "string" },
+    "seasonId": { "type": "string" }
+  },
+  "definitions": {
+    "cardState": {
+      "type": "object",
+      "required": ["home", "away"],
+      "properties": { "home": { "type": "integer", "minimum": 0 }, "away": { "type": "integer", "minimum": 0 } }
+    },
+    "teamStats": {
+      "type": "object",
+      "properties": {
+        "shots": { "type": "integer", "minimum": 0 },
+        "shotsOnTarget": { "type": "integer", "minimum": 0 },
+        "shotsBlocked": { "type": "integer", "minimum": 0 },
+        "xg": { "type": "number", "minimum": 0 },
+        "corners": { "type": "integer", "minimum": 0 },
+        "fouls": { "type": "integer", "minimum": 0 },
+        "dangerousAttacks": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "windowStats": {
+      "type": "object",
+      "required": ["windowSeconds", "home", "away"],
+      "properties": {
+        "windowSeconds": { "type": "integer", "minimum": 0 },
+        "home": { "$ref": "#/definitions/teamStats" },
+        "away": { "$ref": "#/definitions/teamStats" }
+      }
+    }
+  }
+}

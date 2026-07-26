@@ -1,0 +1,22 @@
+# Secrets — never commit real credentials
+.env
+.env.local
+
+# Runtime data (SQLite WAL mode)
+golo.db
+golo.db-shm
+golo.db-wal
+*.db
+*.db-shm
+*.db-wal
+
+# Build artifacts
+bin/
+
+# Frontend
+apps/web/node_modules/
+apps/web/dist/
+
+# Local machine/editor config
+.claude/settings.local.json
+.DS_Store

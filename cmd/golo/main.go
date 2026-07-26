@@ -1,0 +1,246 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/enzotriches/golo/internal/api"
+	"github.com/enzotriches/golo/internal/config"
+	"github.com/enzotriches/golo/internal/domain"
+	"github.com/enzotriches/golo/internal/evaluation"
+	"github.com/enzotriches/golo/internal/eventstore"
+	"github.com/enzotriches/golo/internal/features"
+	"github.com/enzotriches/golo/internal/predictor"
+	"github.com/enzotriches/golo/internal/providers"
+	"github.com/enzotriches/golo/internal/providers/mock"
+	"github.com/enzotriches/golo/internal/providers/sportmonks"
+	"github.com/enzotriches/golo/internal/publisher"
+	"github.com/enzotriches/golo/internal/quality"
+	"github.com/enzotriches/golo/internal/reducer"
+)
+
+func main() {
+	log.Println("Starting Golo Engine (Real-Time Football Probability Engine v1.0)...")
+
+	cfg := config.Load()
+
+	// 1. Initialize SQLite Database EventStore
+	store, err := eventstore.NewSQLiteStore(cfg.DBPath)
+	if err != nil {
+		log.Fatalf("Failed to initialize SQLite store: %v", err)
+	}
+	defer store.Close()
+	log.Println("SQLite EventStore initialized at:", cfg.DBPath)
+
+	// 2. Load Model Artifact & Predictor
+	predEngine, err := predictor.NewPredictor(cfg.ModelPath)
+	if err != nil {
+		log.Fatalf("Failed to load predictor model: %v", err)
+	}
+	log.Println("Loaded Baseline Model Artifact:", cfg.ModelPath)
+
+	// 3. Initialize Core Domain Processing Components
+	fe := features.NewFeatureEngine()
+	red := reducer.NewReducer()
+	eval := quality.NewEvaluator()
+	pub := publisher.NewPublisher(cfg.FirebaseDatabaseURL, cfg.FirebaseAuth)
+
+	// 4. Initialize Data Provider (selected via PROVIDER env var: mock | sportmonks)
+	prov := newProvider(cfg)
+	log.Printf("Data Provider initialized: %s", prov.Name())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// 5. Ingestion & Inference Loop
+	go runIngestionLoop(ctx, prov, cfg.PollInterval, store, red, fe, eval, predEngine, pub)
+
+	// 6. Start HTTP API Server
+	addr := fmt.Sprintf(":%s", cfg.Port)
+
+	server := api.NewServer(store, pub, nil)
+
+	go func() {
+		log.Printf("Golo HTTP API Server running at http://localhost%s", addr)
+		if err := server.ListenAndServe(addr); err != nil {
+			log.Printf("Server stopped: %v", err)
+		}
+	}()
+
+	// 7. Handle Graceful Shutdown
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	<-sigCh
+
+	log.Println("Shutting down Golo engine gracefully...")
+}
+
+func runIngestionLoop(
+	ctx context.Context,
+	prov providers.Provider,
+	pollInterval time.Duration,
+	store *eventstore.SQLiteStore,
+	red *reducer.Reducer,
+	fe *features.FeatureEngine,
+	eval *quality.Evaluator,
+	predEngine *predictor.Predictor,
+	pub *publisher.Publisher,
+) {
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
+
+	// Keep track of match state and last-seen provider event ID per match.
+	// The cursor matters for providers (e.g. sportmonks) that return the
+	// full cumulative event list on every call rather than only new events
+	// since the last call (which the in-process mock provider does) — without
+	// it, every already-seen event would be re-reduced into state on every
+	// poll tick.
+	matchStates := make(map[string]domain.MatchState)
+	lastEventIDs := make(map[string]string)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			matches, err := prov.ListLiveMatches(ctx)
+			if err != nil {
+				log.Printf("Error fetching live matches: %v", err)
+				continue
+			}
+
+			for _, m := range matches {
+				if err := store.SaveMatch(m); err != nil {
+					log.Printf("Failed to save match: %v", err)
+				}
+
+				state, exists := matchStates[m.ID]
+				if !exists {
+					state = domain.InitialState(m)
+				}
+
+				// Fetch only events newer than the last one we've already reduced.
+				events, err := prov.FetchEventsSince(ctx, m.ID, lastEventIDs[m.ID])
+				if err != nil || len(events) == 0 {
+					continue
+				}
+				lastEventIDs[m.ID] = highestProviderEventID(lastEventIDs[m.ID], events)
+
+				// 1. Save canonical events
+				if err := store.SaveEvents(events); err != nil {
+					log.Printf("Failed to save events: %v", err)
+				}
+
+				// 2. Reduce state deterministically
+				for _, ev := range events {
+					state = red.Reduce(state, ev)
+				}
+				matchStates[m.ID] = state
+
+				// 3. Save match state
+				if err := store.SaveMatchState(state); err != nil {
+					log.Printf("Failed to save match state: %v", err)
+				}
+
+				// 4. Extract features
+				feats, snapshot, err := fe.ExtractFeatures(state)
+				if err != nil {
+					log.Printf("Failed to extract features: %v", err)
+					continue
+				}
+				_ = store.SaveSnapshot(snapshot)
+
+				// 5. Evaluate data quality
+				qualityScore := eval.EvaluateDataQuality(state)
+
+				// 6. Predict probabilities
+				pred, err := predEngine.Predict(state, feats, qualityScore)
+				if err != nil {
+					log.Printf("Failed to predict probabilities: %v", err)
+					continue
+				}
+
+				// 7. Save prediction
+				if err := store.SavePrediction(pred); err != nil {
+					log.Printf("Failed to save prediction: %v", err)
+				}
+
+				// 7.5. Compute this match's own "goal in next 10m" track
+				// record, for the per-card "how right have we been" meter.
+				trackRecord := publisher.TrackRecord{}
+				goalSeconds, endSecond, err := store.GetGoalAndEndSecondsForMatch(m.ID)
+				if err != nil {
+					log.Printf("Failed to load track record data: %v", err)
+				} else if matchPredictions, err := store.GetMatchPredictions(m.ID); err != nil {
+					log.Printf("Failed to load match predictions for track record: %v", err)
+				} else {
+					tr := evaluation.ComputeMatchTrackRecord(matchPredictions, goalSeconds, endSecond)
+					trackRecord = publisher.TrackRecord{AccuracyPct: tr.AccuracyPct, ResolvedCount: tr.ResolvedCount}
+				}
+
+				// 8. Publish update
+				if err := pub.Publish(ctx, state, pred, trackRecord); err != nil {
+					log.Printf("Failed to publish update: %v", err)
+				}
+			}
+		}
+	}
+}
+
+// newProvider selects the live data provider based on cfg.Provider.
+// The SportMonks API key is read only from server-side config here — it must
+// never be forwarded to internal/api/server.go or the frontend.
+func newProvider(cfg config.Config) providers.Provider {
+	switch cfg.Provider {
+	case "sportmonks":
+		if cfg.SportMonksAPIKey == "" {
+			log.Fatal("PROVIDER=sportmonks requires SPORTMONKS_API_KEY to be set")
+		}
+		return sportmonks.New(cfg.SportMonksAPIKey, cfg.SportMonksBaseURL, cfg.PriorityCompetitions)
+	case "mock", "":
+		return mock.NewMockProvider()
+	default:
+		log.Fatalf("unknown PROVIDER %q (expected mock or sportmonks)", cfg.Provider)
+		return nil
+	}
+}
+
+// highestProviderEventID returns the largest numeric ProviderEventID seen
+// across current and previously-seen events, so it can be used as the next
+// FetchEventsSince cursor. Falls back to the previous cursor if no event ID
+// in the batch parses as a number (e.g. the mock provider's "pev_N" IDs,
+// which the mock provider ignores as a cursor anyway).
+func highestProviderEventID(previous string, events []domain.MatchEvent) string {
+	best := previous
+	bestVal, bestOK := parseInt64(previous)
+
+	for _, ev := range events {
+		val, ok := parseInt64(ev.ProviderEventID)
+		if !ok {
+			continue
+		}
+		if !bestOK || val > bestVal {
+			best = ev.ProviderEventID
+			bestVal = val
+			bestOK = true
+		}
+	}
+
+	return best
+}
+
+func parseInt64(s string) (int64, bool) {
+	if s == "" {
+		return 0, false
+	}
+	var v int64
+	if _, err := fmt.Sscanf(s, "%d", &v); err != nil {
+		return 0, false
+	}
+	return v, true
+}

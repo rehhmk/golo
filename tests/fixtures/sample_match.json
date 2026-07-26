@@ -1,0 +1,73 @@
+{
+  "match": {
+    "id": "sample_match_2026_01",
+    "provider": "statsbomb",
+    "providerMatchId": "3788741",
+    "competitionId": "La Liga",
+    "homeTeamId": "Barcelona",
+    "awayTeamId": "Real Madrid",
+    "scheduledAt": "2026-07-25T20:00:00Z",
+    "status": "LIVE",
+    "createdAt": "2026-07-25T19:55:00Z",
+    "updatedAt": "2026-07-25T20:00:00Z"
+  },
+  "events": [
+    {
+      "eventId": "ev_01",
+      "matchId": "sample_match_2026_01",
+      "provider": "statsbomb",
+      "eventType": "PERIOD_START",
+      "matchSecond": 0,
+      "period": 1,
+      "receivedAt": "2026-07-25T20:00:00Z",
+      "schemaVersion": 1
+    },
+    {
+      "eventId": "ev_02",
+      "matchId": "sample_match_2026_01",
+      "provider": "statsbomb",
+      "eventType": "SHOT",
+      "teamId": "Barcelona",
+      "matchSecond": 240,
+      "period": 1,
+      "xg": 0.12,
+      "receivedAt": "2026-07-25T20:04:00Z",
+      "schemaVersion": 1
+    },
+    {
+      "eventId": "ev_03",
+      "matchId": "sample_match_2026_01",
+      "provider": "statsbomb",
+      "eventType": "SHOT_ON_TARGET",
+      "teamId": "Barcelona",
+      "matchSecond": 450,
+      "period": 1,
+      "xg": 0.45,
+      "receivedAt": "2026-07-25T20:07:30Z",
+      "schemaVersion": 1
+    },
+    {
+      "eventId": "ev_04",
+      "matchId": "sample_match_2026_01",
+      "provider": "statsbomb",
+      "eventType": "GOAL",
+      "teamId": "Barcelona",
+      "matchSecond": 720,
+      "period": 1,
+      "xg": 0.78,
+      "receivedAt": "2026-07-25T20:12:00Z",
+      "schemaVersion": 1
+    },
+    {
+      "eventId": "ev_05",
+      "matchId": "sample_match_2026_01",
+      "provider": "statsbomb",
+      "eventType": "RED_CARD",
+      "teamId": "Real Madrid",
+      "matchSecond": 1500,
+      "period": 1,
+      "receivedAt": "2026-07-25T20:25:00Z",
+      "schemaVersion": 1
+    }
+  ]
+}
