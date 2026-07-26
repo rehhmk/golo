@@ -39,7 +39,12 @@ ml/.venv/bin/python ml/src/build_dataset.py
 ml/.venv/bin/python ml/src/train_baseline.py
 ```
 
-Use Odds-API.io only in shadow mode on a development/free plan. Before accepting payment, verify commercial usage and deep-link authorization, select adequate request capacity, then explicitly set `ALERT_ENGINE_ENABLED=true`. The “two more goals” market also requires its own model qualification and the separate dashboard switch.
+Use The Odds API only in shadow mode on a development/free plan. Golo uses
+the quota-free event list first and requests odds plus scores only while a
+target competition is live. Before accepting payment, verify commercial usage
+and deep-link authorization, select adequate request capacity, then explicitly
+set `ALERT_ENGINE_ENABLED=true`. The “two more goals” market also requires its
+own model qualification and the separate dashboard switch.
 
 Telegram enrollment is one-time-code based. A user sends `/start CODE`, confirms 18+ and the beta terms, and receives the same centrally armed strategies until their manually managed expiry. Every qualified entry is retained with its offered price, model/market probability, evidence, and gate decisions; every win, loss, or void is forwarded.
 
