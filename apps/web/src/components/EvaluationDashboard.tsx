@@ -1,132 +1,344 @@
-import React, { useState, useEffect } from 'react';
-import { BarChart3, CheckCircle2, ShieldAlert, Award, FileSpreadsheet } from 'lucide-react';
-import { EvaluationMetrics } from '../types';
+import React, { useState, useEffect, useMemo } from 'react';
+import {
+  ComposedChart,
+  Line,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip as RechartsTooltip,
+  ResponsiveContainer,
+} from 'recharts';
+import { EvaluationMetrics, MatchUpdate } from '../types';
 import { API_BASE_URL } from '../config';
+import { PageHeader } from './PageHeader';
+import { cn } from '@/lib/utils';
 
-export const EvaluationDashboard: React.FC = () => {
+interface EvaluationDashboardProps {
+  matches: MatchUpdate[];
+}
+
+// Deterministic, rule-based reading of the raw rolling-window stats — ranked
+// by how far each deviates from a neutral baseline. This is NOT the model's
+// internal coefficients (those live server-side in the model artifact) and
+// is NOT AI-generated: it's a reproducible reading of the same numbers a
+// human analyst would look at first.
+interface Factor {
+  label: string;
+  detail: string;
+  direction: 'up' | 'down' | 'neutral';
+  magnitude: number;
+}
+
+function computeFactors(m: MatchUpdate): Factor[] {
+  const stats10m = m.state.windows?.[600];
+  const factors: Factor[] = [];
+
+  if (stats10m) {
+    const xgDiff = stats10m.home.xg - stats10m.away.xg;
+    factors.push({
+      label: 'xG acumulado (10m)',
+      detail: `${m.state.homeTeamId} ${stats10m.home.xg.toFixed(2)} · ${m.state.awayTeamId} ${stats10m.away.xg.toFixed(2)}`,
+      direction: xgDiff > 0.05 ? 'up' : xgDiff < -0.05 ? 'down' : 'neutral',
+      magnitude: Math.abs(xgDiff) * 3,
+    });
+
+    const sotTotal = stats10m.home.shotsOnTarget + stats10m.away.shotsOnTarget;
+    factors.push({
+      label: 'Chutes no alvo (10m)',
+      detail: `${sotTotal} no total`,
+      direction: sotTotal >= 3 ? 'up' : sotTotal === 0 ? 'down' : 'neutral',
+      magnitude: sotTotal * 0.4,
+    });
+
+    const dangerousTotal = stats10m.home.dangerousAttacks + stats10m.away.dangerousAttacks;
+    factors.push({
+      label: 'Ataques perigosos (10m)',
+      detail: `${dangerousTotal} registrados`,
+      direction: dangerousTotal >= 8 ? 'up' : dangerousTotal <= 2 ? 'down' : 'neutral',
+      magnitude: dangerousTotal * 0.15,
+    });
+  }
+
+  const redTotal = m.state.redCards.home + m.state.redCards.away;
+  if (redTotal > 0) {
+    factors.push({
+      label: 'Cartão vermelho',
+      detail: `${redTotal} expulsão(ões) em campo`,
+      direction: 'down',
+      magnitude: redTotal * 1.5,
+    });
+  }
+
+  const scoreDiff = Math.abs(m.state.score.home - m.state.score.away);
+  factors.push(
+    scoreDiff > 0
+      ? {
+          label: 'Diferença no placar',
+          detail: `${scoreDiff} gol(s) — time atrás tende a pressionar`,
+          direction: 'up',
+          magnitude: scoreDiff * 0.6,
+        }
+      : { label: 'Jogo empatado', detail: 'Sem pressão adicional por placar', direction: 'neutral', magnitude: 0.1 }
+  );
+
+  return factors.sort((a, b) => b.magnitude - a.magnitude).slice(0, 4);
+}
+
+const EMPTY_METRICS: EvaluationMetrics = {
+  brierScore: 0,
+  logLoss: 0,
+  ece: 0,
+  hitRatePct: 0,
+  calibrationCurve: [],
+  totalSnapshots: 0,
+  dataQualityAvg: 0,
+  staleFeedPct: 0,
+  modelVersion: '—',
+  featureVersion: '—',
+  evaluatedPeriod: '—',
+};
+
+export const EvaluationDashboard: React.FC<EvaluationDashboardProps> = ({ matches }) => {
   const [metrics, setMetrics] = useState<EvaluationMetrics | null>(null);
+  const [selectedMatchId, setSelectedMatchId] = useState<string | null>(null);
 
   useEffect(() => {
     fetch(`${API_BASE_URL}/api/metrics`)
       .then((res) => res.json())
-      .then((data) => setMetrics(data))
-      .catch(() => {
-        // Fallback mock metrics if backend is offline
-        setMetrics({
-          brierScore: 0.142,
-          logLoss: 0.418,
-          ece: 0.024,
-          hitRatePct: 71.4,
-          calibrationCurve: [
-            { bin: '0.0-0.2', predicted: 0.11, observed: 0.10, count: 450 },
-            { bin: '0.2-0.4', predicted: 0.31, observed: 0.29, count: 680 },
-            { bin: '0.4-0.6', predicted: 0.51, observed: 0.52, count: 520 },
-            { bin: '0.6-0.8', predicted: 0.72, observed: 0.70, count: 310 },
-            { bin: '0.8-1.0', predicted: 0.89, observed: 0.91, count: 140 },
-          ],
-          totalSnapshots: 2100,
-          dataQualityAvg: 0.94,
-          staleFeedPct: 2.1,
-          modelVersion: 'baseline_v1.0.0',
-          featureVersion: 'v1.0.0',
-          evaluatedPeriod: '2026-07-25',
-        });
-      });
+      // Defensive defaults: an older backend build (or partial response) may
+      // omit newer fields, and one missing number must not crash the page.
+      .then((data) => setMetrics({ ...EMPTY_METRICS, ...data }))
+      .catch(() => setMetrics(EMPTY_METRICS));
   }, []);
 
+  const selectedMatch = useMemo(() => {
+    if (matches.length === 0) return null;
+    if (selectedMatchId) {
+      const found = matches.find((m) => m.state.matchId === selectedMatchId);
+      if (found) return found;
+    }
+    return [...matches].sort(
+      (a, b) => b.prediction.probabilities.goalNext10m - a.prediction.probabilities.goalNext10m
+    )[0];
+  }, [matches, selectedMatchId]);
+
+  const factors = selectedMatch ? computeFactors(selectedMatch) : [];
+
+  const chartData = useMemo(
+    () =>
+      (metrics?.calibrationCurve ?? []).map((row) => ({
+        bin: row.bin,
+        Previsto: Number((row.predicted * 100).toFixed(1)),
+        Observado: Number((row.observed * 100).toFixed(1)),
+        Amostras: row.count,
+      })),
+    [metrics]
+  );
+
   if (!metrics) {
-    return <div className="p-8 text-center text-slate-400">Carregando métricas...</div>;
+    return <div className="py-20 text-center text-[13px] text-slate-500">Carregando métricas…</div>;
   }
 
+  const hasData = metrics.totalSnapshots > 0;
+
   return (
-    <div className="space-y-6">
-      {/* Header Banner */}
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 sm:p-8">
-        <div className="flex items-center gap-3">
-          <div className="p-3 bg-emerald-500/10 rounded-xl border border-emerald-500/20 text-emerald-400">
-            <BarChart3 className="w-6 h-6" />
+    <div>
+      <PageHeader
+        label="Avaliação"
+        title="Analytics"
+        description="Calibração e erro das previsões, medidos contra resultados reais."
+        meta={
+          <div className="font-mono text-[11px] tabular-nums text-slate-500">
+            <span className="text-slate-200">{metrics.totalSnapshots.toLocaleString('pt-BR')}</span> previsões ·{' '}
+            {metrics.modelVersion}
           </div>
-          <div>
-            <h1 className="text-2xl font-extrabold text-slate-50 tracking-tight">Painel de Avaliação & Calibração</h1>
-            <p className="text-xs text-slate-400 font-mono mt-0.5">
-              North Star Métrica: Brier Score e Calibração Probabilística Fora da Amostra
-            </p>
-          </div>
-        </div>
+        }
+      />
+
+      {/* Metric row — no cards, just a ruled grid */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-px bg-white/[0.06] border border-white/[0.06] rounded-md overflow-hidden mb-8">
+        <Metric
+          label="Acerto geral"
+          value={`${metrics.hitRatePct.toFixed(1)}%`}
+          hint="Previsões de gol até o fim que acertaram"
+          accent
+        />
+        <Metric label="Brier score" value={metrics.brierScore.toFixed(3)} hint="Menor é melhor · baseline ~0.220" />
+        <Metric label="Log loss" value={metrics.logLoss.toFixed(3)} hint="Penalização de incerteza" />
+        <Metric label="ECE" value={`${(metrics.ece * 100).toFixed(1)}%`} hint="Desvio médio previsto vs. real" />
       </div>
 
-      {/* Top 4 Metric Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
-          <span className="text-xs font-mono text-slate-400 block mb-1">Acerto Geral ("Bom em Adivinhar")</span>
-          <div className="font-mono text-3xl font-black text-emerald-400">{metrics.hitRatePct.toFixed(1)}%</div>
-          <p className="text-[11px] text-slate-500 mt-2">% de previsões de "gol até o fim" que acertaram o resultado</p>
-        </div>
+      {/* Calibration */}
+      <section className="mb-8">
+        <SectionHeading
+          title="Curva de calibração"
+          description="Quanto mais próximas as linhas, melhor calibrado o modelo."
+        />
+        {hasData && chartData.length > 0 ? (
+          <>
+            <div className="h-64 w-full mt-4">
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart data={chartData} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
+                  <CartesianGrid stroke="rgba(255,255,255,0.05)" vertical={false} />
+                  <XAxis
+                    dataKey="bin"
+                    tick={{ fill: '#64748B', fontSize: 11, fontFamily: 'JetBrains Mono' }}
+                    axisLine={{ stroke: 'rgba(255,255,255,0.08)' }}
+                    tickLine={false}
+                  />
+                  <YAxis
+                    yAxisId="pct"
+                    domain={[0, 100]}
+                    unit="%"
+                    tick={{ fill: '#64748B', fontSize: 11, fontFamily: 'JetBrains Mono' }}
+                    axisLine={false}
+                    tickLine={false}
+                  />
+                  <YAxis yAxisId="count" orientation="right" hide />
+                  <RechartsTooltip
+                    contentStyle={{
+                      backgroundColor: '#0B1221',
+                      border: '1px solid rgba(255,255,255,0.1)',
+                      borderRadius: 6,
+                      fontSize: 12,
+                      fontFamily: 'JetBrains Mono',
+                    }}
+                    labelStyle={{ color: '#F8FAFC' }}
+                    cursor={{ fill: 'rgba(255,255,255,0.03)' }}
+                  />
+                  <Bar yAxisId="count" dataKey="Amostras" fill="rgba(255,255,255,0.06)" radius={[2, 2, 0, 0]} barSize={32} />
+                  <Line yAxisId="pct" type="monotone" dataKey="Previsto" stroke="#34D399" strokeWidth={1.5} dot={{ r: 2.5, fill: '#34D399' }} />
+                  <Line yAxisId="pct" type="monotone" dataKey="Observado" stroke="#38BDF8" strokeWidth={1.5} dot={{ r: 2.5, fill: '#38BDF8' }} />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
 
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
-          <span className="text-xs font-mono text-slate-400 block mb-1">Brier Score (Menor é Melhor)</span>
-          <div className="font-mono text-3xl font-black text-emerald-400">{metrics.brierScore.toFixed(3)}</div>
-          <p className="text-[11px] text-slate-500 mt-2">Baseline ingênuo: ~0.220 | Ganho estatístico comprovado</p>
-        </div>
+            <div className="flex items-center gap-5 mt-2 font-mono text-[11px] text-slate-500">
+              <LegendDot color="#34D399" label="Previsto" />
+              <LegendDot color="#38BDF8" label="Observado" />
+              <LegendDot color="rgba(255,255,255,0.15)" label="Amostras" />
+            </div>
 
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
-          <span className="text-xs font-mono text-slate-400 block mb-1">Log Loss</span>
-          <div className="font-mono text-3xl font-black text-amber-400">{metrics.logLoss.toFixed(3)}</div>
-          <p className="text-[11px] text-slate-500 mt-2">Penalização logarítmica de incerteza</p>
-        </div>
+            {/* Exact values */}
+            <table className="w-full mt-6 text-left font-mono text-[12px] tabular-nums">
+              <thead>
+                <tr className="text-slate-600 border-b border-white/[0.08]">
+                  <th className="font-normal py-2 pr-4">Faixa</th>
+                  <th className="font-normal py-2 pr-4">Previsto</th>
+                  <th className="font-normal py-2 pr-4">Observado</th>
+                  <th className="font-normal py-2 pr-4">Amostras</th>
+                  <th className="font-normal py-2">Desvio</th>
+                </tr>
+              </thead>
+              <tbody>
+                {metrics.calibrationCurve.map((row) => {
+                  const diff = row.observed - row.predicted;
+                  const calibrated = Math.abs(diff) <= 0.03;
+                  return (
+                    <tr key={row.bin} className="border-b border-white/[0.04]">
+                      <td className="py-2 pr-4 text-slate-400">{row.bin}</td>
+                      <td className="py-2 pr-4 text-slate-200">{(row.predicted * 100).toFixed(1)}%</td>
+                      <td className="py-2 pr-4 text-slate-200">{(row.observed * 100).toFixed(1)}%</td>
+                      <td className="py-2 pr-4 text-slate-500">{row.count}</td>
+                      <td className={cn('py-2', calibrated ? 'text-slate-500' : 'text-amber-400')}>
+                        {diff >= 0 ? '+' : ''}
+                        {(diff * 100).toFixed(1)}pp
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </>
+        ) : (
+          <EmptyNote>
+            Ainda não há previsões resolvidas o suficiente para medir calibração. As métricas aparecem conforme as
+            partidas avançam e os horizontes se resolvem.
+          </EmptyNote>
+        )}
+      </section>
 
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
-          <span className="text-xs font-mono text-slate-400 block mb-1">Expected Calibration Error (ECE)</span>
-          <div className="font-mono text-3xl font-black text-slate-100">{(metrics.ece * 100).toFixed(1)}%</div>
-          <p className="text-[11px] text-slate-500 mt-2">Desvio médio entre probabilidade prevista e ocorrência real</p>
-        </div>
-      </div>
+      {/* Per-match reasoning */}
+      {selectedMatch && (
+        <section>
+          <SectionHeading
+            title="Por que esta previsão"
+            description="Indicadores brutos que mais se destacam agora. Leitura direta dos números — não gerado por IA."
+          />
 
-      {/* Calibration Curve Table */}
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6">
-        <h3 className="text-base font-bold text-slate-100 mb-4 flex items-center gap-2">
-          <FileSpreadsheet className="w-4 h-4 text-emerald-400" /> Tabela de Curva de Calibração (Reliability Diagram)
-        </h3>
+          {matches.length > 1 && (
+            <div className="flex flex-wrap gap-1 mt-4 mb-1">
+              {matches.map((m) => (
+                <button
+                  key={m.state.matchId}
+                  onClick={() => setSelectedMatchId(m.state.matchId)}
+                  className={cn(
+                    'px-2.5 py-1.5 rounded text-[12px] transition-colors',
+                    m.state.matchId === selectedMatch.state.matchId
+                      ? 'text-slate-100 bg-white/[0.06]'
+                      : 'text-slate-500 hover:text-slate-300'
+                  )}
+                >
+                  {m.state.homeTeamId} × {m.state.awayTeamId}
+                </button>
+              ))}
+            </div>
+          )}
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse font-mono text-xs">
-            <thead>
-              <tr className="border-b border-slate-800 text-slate-400">
-                <th className="py-3 px-4">Faixa de Probabilidade (Bin)</th>
-                <th className="py-3 px-4">Probabilidade Prevista Média</th>
-                <th className="py-3 px-4">Frequência Observada Real</th>
-                <th className="py-3 px-4">Quantidade de Snapshots</th>
-                <th className="py-3 px-4">Status de Calibração</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-800/60">
-              {metrics.calibrationCurve.map((row) => {
-                const diff = Math.abs(row.predicted - row.observed);
-                const isCalibrated = diff <= 0.03;
-                return (
-                  <tr key={row.bin} className="hover:bg-slate-950/50 transition-all">
-                    <td className="py-3 px-4 font-bold text-slate-200">{row.bin}</td>
-                    <td className="py-3 px-4 text-emerald-400 font-bold">{(row.predicted * 100).toFixed(1)}%</td>
-                    <td className="py-3 px-4 text-slate-100 font-bold">{(row.observed * 100).toFixed(1)}%</td>
-                    <td className="py-3 px-4 text-slate-400">{row.count}</td>
-                    <td className="py-3 px-4">
-                      {isCalibrated ? (
-                        <span className="inline-flex items-center gap-1 text-[11px] text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
-                          <CheckCircle2 className="w-3 h-3" /> Calibrado
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 text-[11px] text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
-                          <ShieldAlert className="w-3 h-3" /> Leve Desvio
-                        </span>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </div>
+          <ul className="mt-3 border-t border-white/[0.06]">
+            {factors.map((f) => (
+              <li key={f.label} className="flex items-baseline gap-3 py-2.5 border-b border-white/[0.06]">
+                <span
+                  className={cn(
+                    'font-mono text-[11px] w-4 shrink-0',
+                    f.direction === 'up' ? 'text-emerald-400' : f.direction === 'down' ? 'text-rose-400' : 'text-slate-600'
+                  )}
+                >
+                  {f.direction === 'up' ? '↑' : f.direction === 'down' ? '↓' : '·'}
+                </span>
+                <span className="text-[13px] text-slate-200 w-52 shrink-0">{f.label}</span>
+                <span className="text-[12.5px] text-slate-500">{f.detail}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
     </div>
   );
 };
+
+const Metric: React.FC<{ label: string; value: string; hint: string; accent?: boolean }> = ({
+  label,
+  value,
+  hint,
+  accent,
+}) => (
+  <div className="bg-[#0B1221] px-4 py-3.5">
+    <div className="font-mono text-[10px] uppercase tracking-wider text-slate-600 mb-1.5">{label}</div>
+    <div className={cn('font-mono text-[26px] leading-none tabular-nums', accent ? 'text-emerald-400' : 'text-slate-100')}>
+      {value}
+    </div>
+    <div className="text-[11px] text-slate-600 mt-1.5">{hint}</div>
+  </div>
+);
+
+const SectionHeading: React.FC<{ title: string; description?: string }> = ({ title, description }) => (
+  <div>
+    <h2 className="text-[15px] font-medium text-slate-100">{title}</h2>
+    {description && <p className="text-[12.5px] text-slate-500 mt-1">{description}</p>}
+  </div>
+);
+
+const LegendDot: React.FC<{ color: string; label: string }> = ({ color, label }) => (
+  <span className="flex items-center gap-1.5">
+    <span className="w-2.5 h-[2px] rounded-full" style={{ backgroundColor: color }} />
+    {label}
+  </span>
+);
+
+const EmptyNote: React.FC<{ children: React.ReactNode }> = ({ children }) => (
+  <p className="mt-4 py-6 px-4 border-l-2 border-white/[0.08] bg-white/[0.02] text-[13px] leading-relaxed text-slate-500">
+    {children}
+  </p>
+);

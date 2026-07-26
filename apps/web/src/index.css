@@ -2,10 +2,47 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Golo brand theme, mapped onto shadcn/ui's semantic tokens.
+   The app is dark-only (no light-mode toggle exists), so :root and .dark
+   carry the same values rather than defining an unused light palette. */
 @layer base {
+  /* Unitless H S% L% triples (not wrapped in hsl()) so Tailwind's
+     hsl(var(--x) / <alpha-value>) mapping in tailwind.config.js can inject
+     opacity modifiers like bg-destructive/20. */
+  :root,
+  .dark {
+    --background: 228.6 84.0% 4.9%;       /* slate-950 canvas */
+    --foreground: 210.0 40.0% 98.0%;      /* slate-100 */
+    --card: 222.2 47.4% 11.2%;            /* slate-900 */
+    --card-foreground: 210.0 40.0% 98.0%;
+    --popover: 222.2 47.4% 11.2%;
+    --popover-foreground: 210.0 40.0% 98.0%;
+    --primary: 158.1 64.4% 51.6%;         /* emerald-400 */
+    --primary-foreground: 228.6 84.0% 4.9%;
+    --secondary: 217.2 32.6% 17.5%;       /* slate-800 */
+    --secondary-foreground: 210.0 40.0% 98.0%;
+    --muted: 217.2 32.6% 17.5%;
+    --muted-foreground: 215.0 20.2% 65.1%; /* slate-400 */
+    --accent: 217.2 32.6% 17.5%;
+    --accent-foreground: 210.0 40.0% 98.0%;
+    --destructive: 349.7 89.2% 60.2%;     /* rose-500 */
+    --destructive-foreground: 210.0 40.0% 98.0%;
+    --border: 215.3 25.0% 26.7%;
+    --input: 217.2 32.6% 17.5%;
+    --ring: 158.1 64.4% 51.6%;
+    --chart-1: 158.1 64.4% 51.6%; /* emerald */
+    --chart-2: 43.3 96.4% 56.3%;  /* amber */
+    --chart-3: 349.7 89.2% 60.2%; /* rose */
+    --chart-4: 198.4 93.2% 59.6%; /* sky */
+    --chart-5: 255.1 91.7% 76.3%; /* violet */
+    --radius: 0.75rem;
+  }
+
+  * {
+    @apply border-border outline-ring/50;
+  }
   body {
-    background-color: #020617;
-    color: #F8FAFC;
+    @apply bg-background text-foreground;
     font-family: 'Inter', sans-serif;
   }
 }

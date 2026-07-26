@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { Navbar } from './components/Navbar';
+import { Navbar, ActiveTab } from './components/Navbar';
 import { LiveBoard } from './components/LiveBoard';
 import { MatchDetail } from './components/MatchDetail';
 import { ReplayControl } from './components/ReplayControl';
 import { EvaluationDashboard } from './components/EvaluationDashboard';
+import { HowItWorks } from './components/HowItWorks';
 import { MatchUpdate, Prediction } from './types';
 import { API_BASE_URL } from './config';
 
@@ -144,12 +145,16 @@ const MOCK_MATCHES: MatchUpdate[] = [
 ];
 
 export const App: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'live' | 'detail' | 'replay' | 'evaluation'>('live');
+  const [activeTab, setActiveTab] = useState<ActiveTab>('live');
   const [matches, setMatches] = useState<MatchUpdate[]>(MOCK_MATCHES);
   const [selectedMatchId, setSelectedMatchId] = useState<string>('live_match_101');
   const [predictionsHistory, setPredictionsHistory] = useState<Prediction[]>([]);
   const [isLiveConnected, setIsLiveConnected] = useState(false);
   const [hitRatePct, setHitRatePct] = useState<number | null>(null);
+  // Rolling client-side history of each match's 10m probability, so the
+  // board can draw a real pressure sparkline (blueprint §5A) without the
+  // backend needing to serve a separate time series.
+  const [probHistory, setProbHistory] = useState<Record<string, number[]>>({});
 
   // Poll HTTP API for live match updates
   useEffect(() => {
@@ -160,6 +165,14 @@ export const App: React.FC = () => {
           if (Array.isArray(data) && data.length > 0) {
             setMatches(data);
             setIsLiveConnected(true);
+            setProbHistory((prev) => {
+              const next = { ...prev };
+              for (const m of data) {
+                const series = next[m.state.matchId] ?? [];
+                next[m.state.matchId] = [...series, m.prediction.probabilities.goalNext10m * 100].slice(-40);
+              }
+              return next;
+            });
           }
         })
         .catch(() => {
@@ -217,12 +230,12 @@ export const App: React.FC = () => {
   const selectedMatchUpdate = matches.find((m) => m.state.matchId === selectedMatchId) || matches[0];
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">
+    <div className="min-h-screen bg-background text-foreground flex flex-col font-sans">
       <Navbar activeTab={activeTab} setActiveTab={setActiveTab} isLiveConnected={isLiveConnected} hitRatePct={hitRatePct} />
 
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <main className="flex-1 max-w-[1400px] w-full mx-auto px-5 sm:px-8 py-8">
         {activeTab === 'live' && (
-          <LiveBoard matches={matches} onSelectMatch={handleSelectMatch} />
+          <LiveBoard matches={matches} onSelectMatch={handleSelectMatch} probHistory={probHistory} />
         )}
 
         {activeTab === 'detail' && (
@@ -236,16 +249,25 @@ export const App: React.FC = () => {
         {activeTab === 'replay' && (
           <div className="space-y-6">
             <ReplayControl onControlAction={handleReplayAction} />
-            <LiveBoard matches={matches} onSelectMatch={handleSelectMatch} />
+            <LiveBoard matches={matches} onSelectMatch={handleSelectMatch} probHistory={probHistory} />
           </div>
         )}
 
-        {activeTab === 'evaluation' && <EvaluationDashboard />}
+        {activeTab === 'howitworks' && <HowItWorks />}
+
+        {activeTab === 'analytics' && <EvaluationDashboard matches={matches} />}
       </main>
 
       {/* Footer */}
-      <footer className="bg-slate-900 border-t border-slate-800 py-6 text-center text-xs text-slate-500 font-mono">
-        <p>Golo © 2026 — Real-Time Football Probability Engine MVP. Strictly for quantitative research & auditability.</p>
+      <footer className="border-t border-white/[0.08] mt-8">
+        <div className="max-w-[1400px] mx-auto px-5 sm:px-8 py-5 flex flex-col sm:flex-row gap-2 sm:items-center justify-between">
+          <p className="text-[11px] text-slate-600">
+            Golo © 2026 — Ferramenta analítica. Probabilidades são estimativas, não garantias.
+          </p>
+          <p className="font-mono text-[10px] uppercase tracking-wider text-slate-700">
+            Pesquisa quantitativa · Auditável
+          </p>
+        </div>
       </footer>
     </div>
   );
