@@ -22,22 +22,32 @@ type Config struct {
 	DBPath    string
 	ModelPath string
 
-	FirebaseDatabaseURL   string
-	FirebaseAuth          string
-	OddsAPIKey            string
-	OddsAPIBaseURL        string
-	OddsProvider          string
-	OddsBookmaker         string
-	OddsSportKeys         []string
-	OddsPollInterval      time.Duration
-	AlertEngineEnabled    bool
-	TelegramEnabled       bool
-	TelegramBotToken      string
-	TelegramWebhookSecret string
-	AdminPasswordHash     string
-	AdminSessionSecret    string
-	AllowedWebOrigin      string
-	HistoricalDatasetPath string
+	FirebaseDatabaseURL         string
+	FirebaseAuth                string
+	OddsAPIKey                  string
+	OddsAPIBaseURL              string
+	OddsProvider                string
+	OddsBookmaker               string
+	OddsSportKeys               []string
+	OddsPollInterval            time.Duration
+	ParlayAPIKey                string
+	ParlayAPIBaseURL            string
+	ParlaySportKeys             []string
+	ParlayBookmaker             string
+	ParlayShadowEnabled         bool
+	AlertEngineEnabled          bool
+	TelegramEnabled             bool
+	ExperimentalBetaEnabled     bool
+	ExperimentalTelegramEnabled bool
+	ExperimentalDailyLimit      int
+	ExperimentalMinimumOdds     float64
+	ExperimentalMinimumEdge     float64
+	TelegramBotToken            string
+	TelegramWebhookSecret       string
+	AdminPasswordHash           string
+	AdminSessionSecret          string
+	AllowedWebOrigin            string
+	HistoricalDatasetPath       string
 
 	PollInterval time.Duration
 
@@ -72,27 +82,53 @@ func Load() Config {
 		DBPath:    getEnv("DB_PATH", "./golo.db"),
 		ModelPath: getEnv("MODEL_PATH", "./models/hazard_v1.json"),
 
-		FirebaseDatabaseURL:   getEnv("FIREBASE_DATABASE_URL", ""),
-		FirebaseAuth:          getEnv("FIREBASE_AUTH", ""),
-		OddsAPIKey:            getEnv("ODDS_API_KEY", ""),
-		OddsAPIBaseURL:        getEnv("ODDS_API_BASE_URL", "https://api.the-odds-api.com/v4"),
-		OddsProvider:          getEnv("ODDS_PROVIDER", "the-odds-api"),
-		OddsBookmaker:         getEnv("ODDS_BOOKMAKER", "Betsson"),
-		OddsSportKeys:         getEnvListWithDefault("ODDS_SPORT_KEYS", []string{"soccer_brazil_campeonato", "soccer_conmebol_copa_libertadores", "soccer_usa_mls", "soccer_mexico_ligamx"}),
-		OddsPollInterval:      getEnvDuration("ODDS_POLL_INTERVAL_SECONDS", 60*time.Second),
-		AlertEngineEnabled:    getEnvBool("ALERT_ENGINE_ENABLED", false),
-		TelegramEnabled:       getEnvBool("TELEGRAM_ENABLED", false),
-		TelegramBotToken:      getEnv("TELEGRAM_BOT_TOKEN", ""),
-		TelegramWebhookSecret: getEnv("TELEGRAM_WEBHOOK_SECRET", ""),
-		AdminPasswordHash:     getEnv("ADMIN_PASSWORD_HASH", ""),
-		AdminSessionSecret:    getEnv("ADMIN_SESSION_SECRET", ""),
-		AllowedWebOrigin:      getEnv("ALLOWED_WEB_ORIGIN", ""),
-		HistoricalDatasetPath: getEnv("HISTORICAL_DATASET_PATH", "./ml/data/fixtures.jsonl"),
+		FirebaseDatabaseURL:         getEnv("FIREBASE_DATABASE_URL", ""),
+		FirebaseAuth:                getEnv("FIREBASE_AUTH", ""),
+		OddsAPIKey:                  getEnv("ODDS_API_KEY", ""),
+		OddsAPIBaseURL:              getEnv("ODDS_API_BASE_URL", "https://api.the-odds-api.com/v4"),
+		OddsProvider:                getEnv("ODDS_PROVIDER", "the-odds-api"),
+		OddsBookmaker:               getEnv("ODDS_BOOKMAKER", "Betsson"),
+		OddsSportKeys:               getEnvListWithDefault("ODDS_SPORT_KEYS", []string{"soccer_brazil_campeonato", "soccer_conmebol_copa_libertadores", "soccer_usa_mls", "soccer_mexico_ligamx"}),
+		OddsPollInterval:            getEnvDuration("ODDS_POLL_INTERVAL_SECONDS", 60*time.Second),
+		ParlayAPIKey:                getEnv("PARLAY_API_KEY", ""),
+		ParlayAPIBaseURL:            getEnv("PARLAY_API_BASE_URL", "https://parlay-api.com/v1"),
+		ParlaySportKeys:             getEnvListWithDefault("PARLAY_SPORT_KEYS", []string{"soccer_brazil_campeonato", "soccer_usa_mls", "soccer_mexico_ligamx"}),
+		ParlayBookmaker:             getEnv("PARLAY_BOOKMAKER", "Pinnacle"),
+		ParlayShadowEnabled:         getEnvBool("PARLAY_SHADOW_ENABLED", false),
+		AlertEngineEnabled:          getEnvBool("ALERT_ENGINE_ENABLED", false),
+		TelegramEnabled:             getEnvBool("TELEGRAM_ENABLED", false),
+		ExperimentalBetaEnabled:     getEnvBool("EXPERIMENTAL_BETA_ENABLED", false),
+		ExperimentalTelegramEnabled: getEnvBool("EXPERIMENTAL_TELEGRAM_ENABLED", false),
+		ExperimentalDailyLimit:      getEnvInt("EXPERIMENTAL_DAILY_LIMIT", 3),
+		ExperimentalMinimumOdds:     getEnvFloat("EXPERIMENTAL_MINIMUM_ODDS", 1.50),
+		ExperimentalMinimumEdge:     getEnvFloat("EXPERIMENTAL_MINIMUM_EDGE", 0.08),
+		TelegramBotToken:            getEnv("TELEGRAM_BOT_TOKEN", ""),
+		TelegramWebhookSecret:       getEnv("TELEGRAM_WEBHOOK_SECRET", ""),
+		AdminPasswordHash:           getEnv("ADMIN_PASSWORD_HASH", ""),
+		AdminSessionSecret:          getEnv("ADMIN_SESSION_SECRET", ""),
+		AllowedWebOrigin:            getEnv("ALLOWED_WEB_ORIGIN", ""),
+		HistoricalDatasetPath:       getEnv("HISTORICAL_DATASET_PATH", "./ml/data/fixtures.jsonl"),
 
 		PollInterval: getEnvDuration("PROVIDER_POLL_INTERVAL_SECONDS", 3*time.Second),
 
 		PriorityCompetitions: getEnvList("PRIORITY_COMPETITION_IDS"),
 	}
+}
+
+func getEnvInt(key string, fallback int) int {
+	value, err := strconv.Atoi(strings.TrimSpace(os.Getenv(key)))
+	if err != nil {
+		return fallback
+	}
+	return value
+}
+
+func getEnvFloat(key string, fallback float64) float64 {
+	value, err := strconv.ParseFloat(strings.TrimSpace(os.Getenv(key)), 64)
+	if err != nil {
+		return fallback
+	}
+	return value
 }
 
 func getEnvBool(key string, fallback bool) bool {

@@ -115,7 +115,8 @@ func convert(rows []eventDTO, bookmaker string, receivedAt time.Time) []odds.Eve
 	out := make([]odds.Event, 0, len(rows))
 	for _, row := range rows {
 		event := odds.Event{
-			ID: fmt.Sprint(row.ID), Home: row.Home, Away: row.Away,
+			Provider: "odds-api.io",
+			ID:       fmt.Sprint(row.ID), Home: row.Home, Away: row.Away,
 			Competition: row.League.Name, HomeScore: row.Scores.Home, AwayScore: row.Scores.Away,
 		}
 		event.ScheduledAt, _ = time.Parse(time.RFC3339, row.Date)
@@ -155,6 +156,7 @@ func convert(rows []eventDTO, bookmaker string, receivedAt time.Time) []odds.Eve
 					selectionLink = link
 				}
 				event.Quotes = append(event.Quotes, odds.Quote{
+					Provider:        "odds-api.io",
 					ProviderEventID: event.ID, Bookmaker: bookmaker, Market: "totals",
 					Line: line, Over: over, Under: under,
 					Suspended: market.Suspended || selection.Suspended,

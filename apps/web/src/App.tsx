@@ -9,146 +9,14 @@ import { StrategyLab } from './components/StrategyLab';
 import { MatchUpdate, Prediction } from './types';
 import { API_BASE_URL } from './config';
 
-// Fallback mock matches for standalone preview
-const MOCK_MATCHES: MatchUpdate[] = [
-  {
-    state: {
-      matchId: 'live_match_101',
-      status: 'LIVE',
-      period: 2,
-      clockSeconds: 4080, // 68th min
-      score: { home: 1, away: 1 },
-      redCards: { home: 0, away: 0 },
-      yellowCards: { home: 2, away: 1 },
-      substitutions: { home: 1, away: 2 },
-      provider: 'mock_feed',
-      stateVersion: 45,
-      homeTeamId: 'Arsenal',
-      awayTeamId: 'Chelsea',
-      competitionId: 'Premier League',
-      feedLagMs: 250,
-      windows: {
-        600: {
-          windowSeconds: 600,
-          home: { shots: 5, shotsOnTarget: 3, shotsBlocked: 1, xg: 0.84, corners: 4, fouls: 2, dangerousAttacks: 12 },
-          away: { shots: 1, shotsOnTarget: 0, shotsBlocked: 0, xg: 0.06, corners: 1, fouls: 4, dangerousAttacks: 3 },
-        },
-      },
-    },
-    prediction: {
-      matchId: 'live_match_101',
-      asOfMatchSecond: 4080,
-      calculatedAt: new Date().toISOString(),
-      probabilities: {
-        goalNext5m: 0.48,
-        goalNext10m: 0.82,
-        goalBeforeFullTime: 0.94,
-      },
-      dataQuality: 0.96,
-      confidenceBand: 'HIGH',
-      status: 'OK',
-      modelVersion: 'baseline_v1.0.0',
-      calibratorVersion: 'platt_v1',
-      featureVersion: 'v1.0.0',
-      predictionSequence: 142,
-    },
-    trackRecord: { accuracyPct: 75, resolvedCount: 8 },
-    timestamp: new Date().toISOString(),
-  },
-  {
-    state: {
-      matchId: 'live_match_102',
-      status: 'LIVE',
-      period: 1,
-      clockSeconds: 2100, // 35th min
-      score: { home: 0, away: 0 },
-      redCards: { home: 0, away: 1 },
-      yellowCards: { home: 1, away: 3 },
-      substitutions: { home: 0, away: 0 },
-      provider: 'mock_feed',
-      stateVersion: 28,
-      homeTeamId: 'Flamengo',
-      awayTeamId: 'Palmeiras',
-      competitionId: 'Brasileirão Série A',
-      feedLagMs: 180,
-      windows: {
-        600: {
-          windowSeconds: 600,
-          home: { shots: 3, shotsOnTarget: 2, shotsBlocked: 1, xg: 0.42, corners: 2, fouls: 3, dangerousAttacks: 8 },
-          away: { shots: 2, shotsOnTarget: 1, shotsBlocked: 0, xg: 0.18, corners: 1, fouls: 5, dangerousAttacks: 5 },
-        },
-      },
-    },
-    prediction: {
-      matchId: 'live_match_102',
-      asOfMatchSecond: 2100,
-      calculatedAt: new Date().toISOString(),
-      probabilities: {
-        goalNext5m: 0.32,
-        goalNext10m: 0.64,
-        goalBeforeFullTime: 0.88,
-      },
-      dataQuality: 0.92,
-      confidenceBand: 'HIGH',
-      status: 'OK',
-      modelVersion: 'baseline_v1.0.0',
-      calibratorVersion: 'platt_v1',
-      featureVersion: 'v1.0.0',
-      predictionSequence: 95,
-    },
-    trackRecord: { accuracyPct: 60, resolvedCount: 5 },
-    timestamp: new Date().toISOString(),
-  },
-  {
-    state: {
-      matchId: 'live_match_103',
-      status: 'LIVE',
-      period: 2,
-      clockSeconds: 4440, // 74th min
-      score: { home: 2, away: 1 },
-      redCards: { home: 0, away: 0 },
-      yellowCards: { home: 0, away: 1 },
-      substitutions: { home: 2, away: 3 },
-      provider: 'mock_feed',
-      stateVersion: 62,
-      homeTeamId: 'Real Madrid',
-      awayTeamId: 'Manchester City',
-      competitionId: 'UEFA Champions League',
-      feedLagMs: 310,
-      windows: {
-        600: {
-          windowSeconds: 600,
-          home: { shots: 2, shotsOnTarget: 1, shotsBlocked: 0, xg: 0.15, corners: 1, fouls: 1, dangerousAttacks: 4 },
-          away: { shots: 2, shotsOnTarget: 1, shotsBlocked: 0, xg: 0.22, corners: 3, fouls: 2, dangerousAttacks: 7 },
-        },
-      },
-    },
-    prediction: {
-      matchId: 'live_match_103',
-      asOfMatchSecond: 4440,
-      calculatedAt: new Date().toISOString(),
-      probabilities: {
-        goalNext5m: 0.18,
-        goalNext10m: 0.38,
-        goalBeforeFullTime: 0.62,
-      },
-      dataQuality: 0.95,
-      confidenceBand: 'HIGH',
-      status: 'OK',
-      modelVersion: 'baseline_v1.0.0',
-      calibratorVersion: 'platt_v1',
-      featureVersion: 'v1.0.0',
-      predictionSequence: 180,
-    },
-    trackRecord: { accuracyPct: 0, resolvedCount: 0 },
-    timestamp: new Date().toISOString(),
-  },
-];
-
 export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<ActiveTab>('live');
-  const [matches, setMatches] = useState<MatchUpdate[]>(MOCK_MATCHES);
-  const [selectedMatchId, setSelectedMatchId] = useState<string>('live_match_101');
+  const [matches, setMatches] = useState<MatchUpdate[]>([]);
+  const [selectedMatchId, setSelectedMatchId] = useState<string>('');
+  // Distinguishes 'no answer yet' from 'answered, and there is nothing live'.
+  // Without it the board cannot tell an empty league schedule from a broken
+  // backend, and previously papered over both with fabricated matches.
+  const [hasLoadedMatches, setHasLoadedMatches] = useState(false);
   const [predictionsHistory, setPredictionsHistory] = useState<Prediction[]>([]);
   const [isLiveConnected, setIsLiveConnected] = useState(false);
   const [hitRatePct, setHitRatePct] = useState<number | null>(null);
@@ -163,9 +31,16 @@ export const App: React.FC = () => {
       fetch(`${API_BASE_URL}/api/matches`)
         .then((res) => res.json())
         .then((data: MatchUpdate[]) => {
-          if (Array.isArray(data) && data.length > 0) {
-            setMatches(data);
-            setIsLiveConnected(true);
+          if (!Array.isArray(data)) {
+            return;
+          }
+          // An empty array is a valid answer, not a failure: it means the
+          // backend is healthy and no match is currently being played. It
+          // must reach the board, or the board keeps showing stale matches.
+          setMatches(data);
+          setIsLiveConnected(true);
+          setHasLoadedMatches(true);
+          if (data.length > 0) {
             setProbHistory((prev) => {
               const next = { ...prev };
               for (const m of data) {
@@ -178,6 +53,7 @@ export const App: React.FC = () => {
         })
         .catch(() => {
           setIsLiveConnected(false);
+          setHasLoadedMatches(true);
         });
     };
 
@@ -242,7 +118,13 @@ export const App: React.FC = () => {
 
       <main className="flex-1 max-w-[1400px] w-full mx-auto px-5 sm:px-8 py-8">
         {activeTab === 'live' && (
-          <LiveBoard matches={matches} onSelectMatch={handleSelectMatch} probHistory={probHistory} />
+          <LiveBoard
+            matches={matches}
+            onSelectMatch={handleSelectMatch}
+            probHistory={probHistory}
+            hasLoaded={hasLoadedMatches}
+            isConnected={isLiveConnected}
+          />
         )}
 
         {activeTab === 'detail' && (
@@ -256,7 +138,13 @@ export const App: React.FC = () => {
         {activeTab === 'replay' && (
           <div className="space-y-6">
             <ReplayControl onControlAction={handleReplayAction} />
-            <LiveBoard matches={matches} onSelectMatch={handleSelectMatch} probHistory={probHistory} />
+            <LiveBoard
+            matches={matches}
+            onSelectMatch={handleSelectMatch}
+            probHistory={probHistory}
+            hasLoaded={hasLoadedMatches}
+            isConnected={isLiveConnected}
+          />
           </div>
         )}
 

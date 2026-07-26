@@ -54,16 +54,35 @@ RED_TYPES = {TYPE_RED, TYPE_SECOND_YELLOW}
 DATA_DIR = pathlib.Path(__file__).resolve().parents[1] / "data"
 RAW_DIR = DATA_DIR / "raw"
 
-ACTIVITY_NAMES = {
-    "shot": "shots_10m_total",
-    "shots": "shots_10m_total",
-    "shot on target": "shots_on_target_10m_total",
-    "shots on target": "shots_on_target_10m_total",
-    "corner": "corners_10m_total",
-    "corners": "corners_10m_total",
-    "dangerous attack": "dangerous_attacks_10m_total",
-    "dangerous attacks": "dangerous_attacks_10m_total",
+# Bumped whenever the requested include changes. Cached pages are keyed by it
+# so a schema change cannot be masked by stale files on disk: the previous
+# build reused pages fetched without the timeline include and reproduced the
+# same empty activity set on every re-run.
+RAW_SCHEMA = "v2-timeline"
+
+# SportMonks timeline event types, by developer_name, mapped to the feature
+# the reducer counts them under. Verified live against fixture 19609643.
+#
+# These live in the `timeline` include, NOT in `events`. The events include
+# carries only goals, cards and substitutions, which is why an earlier build
+# that parsed activity out of `events` produced zero shots across all 3,282
+# matches and left the model with nothing but clock and scoreline to learn
+# from.
+#
+# A shot on target is also a shot, so it contributes to both counters —
+# matching internal/reducer, where EventShotOnTarget satisfies both
+# IsShotEvent() and IsOnTarget().
+ACTIVITY_KINDS = {
+    "SHOT_ON_TARGET": ("shots_10m_total", "shots_on_target_10m_total"),
+    "SHOT_OFF_TARGET": ("shots_10m_total",),
+    "SHOT_BLOCKED": ("shots_10m_total",),
+    "CORNER": ("corners_10m_total",),
 }
+
+# Dangerous attacks are deliberately absent: SportMonks publishes them only as
+# a cumulative fixture statistic, never as a timestamped timeline entry, so no
+# point-in-time value is recoverable from history. That coefficient stays a
+# documented prior.
 
 
 def api_key() -> str:
@@ -198,13 +217,15 @@ def distill(fixture: dict, league_id: int, season_name: str):
             goals.append({"second": sec, "home": bool(scoring_home)})
         elif tid in RED_TYPES:
             reds.append({"second": sec, "home": ev.get("participant_id") == home})
-        else:
-            type_obj = ev.get("type") or {}
-            raw_name = type_obj.get("name") if isinstance(type_obj, dict) else type_obj
-            raw_name = raw_name or ev.get("type_name") or ev.get("name") or ""
-            kind = ACTIVITY_NAMES.get(str(raw_name).strip().lower())
-            if kind:
-                activity.append({"second": sec, "kind": kind})
+
+    for entry in fixture.get("timeline") or []:
+        sec = event_second(entry, first_len)
+        if sec > end:
+            continue
+        type_obj = entry.get("type") or {}
+        developer_name = type_obj.get("developer_name") if isinstance(type_obj, dict) else None
+        for kind in ACTIVITY_KINDS.get(str(developer_name or "").strip().upper(), ()):
+            activity.append({"second": sec, "kind": kind})
 
     goals.sort(key=lambda g: g["second"])
     reds.sort(key=lambda r: r["second"])
@@ -239,7 +260,7 @@ def main():
         for season_id, season_name in seasons_for_league(league_id, key):
             print(f"{league_name} {season_name} (season {season_id})", flush=True)
             for page in range(1, args.max_pages_per_season + 1):
-                cache = RAW_DIR / f"s{season_id}_p{page}.json"
+                cache = RAW_DIR / f"{RAW_SCHEMA}_s{season_id}_p{page}.json"
                 if cache.exists():
                     payload = json.loads(cache.read_text())
                 else:
@@ -247,7 +268,7 @@ def main():
                         "/fixtures",
                         {
                             "filters": f"fixtureSeasons:{season_id}",
-                            "include": "events.type;participants;periods",
+                            "include": "events.type;participants;periods;timeline.type",
                             "per_page": 50,
                             "page": page,
                         },

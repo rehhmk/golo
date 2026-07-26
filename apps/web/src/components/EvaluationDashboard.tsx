@@ -106,6 +106,7 @@ const EMPTY_METRICS: EvaluationMetrics = {
 
 export const EvaluationDashboard: React.FC<EvaluationDashboardProps> = ({ matches }) => {
   const [metrics, setMetrics] = useState<EvaluationMetrics | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [selectedMatchId, setSelectedMatchId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -113,8 +114,17 @@ export const EvaluationDashboard: React.FC<EvaluationDashboardProps> = ({ matche
       .then((res) => res.json())
       // Defensive defaults: an older backend build (or partial response) may
       // omit newer fields, and one missing number must not crash the page.
-      .then((data) => setMetrics({ ...EMPTY_METRICS, ...data }))
-      .catch(() => setMetrics(EMPTY_METRICS));
+      .then((data) => {
+        setMetrics({ ...EMPTY_METRICS, ...data });
+        setLoadFailed(false);
+      })
+      .catch(() => {
+        // Deliberately NOT falling back to zeroes. A dropped request used to
+        // render Brier 0.000 and log loss 0.000 — the numbers a flawless model
+        // would produce — as though they had been measured.
+        setMetrics(null);
+        setLoadFailed(true);
+      });
   }, []);
 
   const selectedMatch = useMemo(() => {
@@ -142,6 +152,17 @@ export const EvaluationDashboard: React.FC<EvaluationDashboardProps> = ({ matche
   );
 
   if (!metrics) {
+    if (loadFailed) {
+      return (
+        <div className="py-20 text-center">
+          <p className="text-[13px] text-amber-300/90">Não foi possível carregar as métricas</p>
+          <p className="text-[12px] text-slate-500 mt-1.5 max-w-md mx-auto leading-relaxed">
+            O servidor não respondeu. Nenhum número é exibido aqui em vez de
+            zeros, porque zero é indistinguível de um modelo perfeito.
+          </p>
+        </div>
+      );
+    }
     return <div className="py-20 text-center text-[13px] text-slate-500">Carregando métricas…</div>;
   }
 

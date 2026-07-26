@@ -1,4 +1,7 @@
-package theoddsapi
+// Package parlayapi implements ParlayAPI's The-Odds-API-compatible surface.
+// cmd/golo wires it only as a shadow provider: these quotes are observed and
+// compared, never passed to the signal engine.
+package parlayapi
 
 import (
 	"context"
@@ -14,9 +17,6 @@ import (
 	"github.com/enzotriches/golo/internal/odds"
 )
 
-// Provider integrates The Odds API v4. It first uses the free /events
-// endpoint to detect target competitions that actually have a live match,
-// then spends quota only for those competitions on /odds and /scores.
 type Provider struct {
 	apiKey     string
 	baseURL    string
@@ -28,10 +28,10 @@ type Provider struct {
 
 func New(apiKey, baseURL, bookmaker string, sports []string) *Provider {
 	if baseURL == "" {
-		baseURL = "https://api.the-odds-api.com/v4"
+		baseURL = "https://parlay-api.com/v1"
 	}
 	if bookmaker == "" {
-		bookmaker = "Betsson"
+		bookmaker = "Pinnacle"
 	}
 	return &Provider{
 		apiKey: apiKey, baseURL: strings.TrimRight(baseURL, "/"),
@@ -40,11 +40,10 @@ func New(apiKey, baseURL, bookmaker string, sports []string) *Provider {
 	}
 }
 
-func (p *Provider) Name() string { return "the-odds-api" }
+func (p *Provider) Name() string { return "parlay-api-shadow" }
 
 type eventDTO struct {
 	ID           string    `json:"id"`
-	SportKey     string    `json:"sport_key"`
 	SportTitle   string    `json:"sport_title"`
 	CommenceTime time.Time `json:"commence_time"`
 	HomeTeam     string    `json:"home_team"`
@@ -83,7 +82,7 @@ type scoreEventDTO struct {
 
 func (p *Provider) FetchLive(ctx context.Context) ([]odds.Event, error) {
 	if p.apiKey == "" {
-		return nil, fmt.Errorf("the odds api: API key is not configured")
+		return nil, fmt.Errorf("parlay api: API key is not configured")
 	}
 	now := p.now()
 	var out []odds.Event
@@ -94,9 +93,6 @@ func (p *Provider) FetchLive(ctx context.Context) ([]odds.Event, error) {
 		}
 		liveIDs := map[string]bool{}
 		for _, event := range listed {
-			// The provider defines an in-play event as one whose commence time
-			// has passed. The four-hour bound prevents an abandoned or delayed
-			// listing from consuming quota forever.
 			if !event.CommenceTime.After(now) && event.CommenceTime.After(now.Add(-4*time.Hour)) {
 				liveIDs[event.ID] = true
 			}
@@ -106,32 +102,29 @@ func (p *Provider) FetchLive(ctx context.Context) ([]odds.Event, error) {
 		}
 
 		params := url.Values{
-			"bookmakers":   {bookmakerKey(p.bookmaker)},
-			"markets":      {"totals"},
-			"oddsFormat":   {"decimal"},
-			"dateFormat":   {"iso"},
-			"includeLinks": {"true"},
+			"bookmakers": {bookmakerKey(p.bookmaker)}, "markets": {"totals"},
+			"oddsFormat": {"decimal"}, "dateFormat": {"iso"}, "includeLinks": {"true"},
 		}
 		var priced []oddsEventDTO
-		if err := p.get(ctx, "/sports/"+url.PathEscape(sport)+"/odds/", params, &priced); err != nil {
+		if err := p.get(ctx, "/sports/"+url.PathEscape(sport)+"/odds", params, &priced); err != nil {
 			return nil, err
 		}
 		var scored []scoreEventDTO
-		if err := p.get(ctx, "/sports/"+url.PathEscape(sport)+"/scores/", nil, &scored); err != nil {
+		if err := p.get(ctx, "/sports/"+url.PathEscape(sport)+"/scores", nil, &scored); err != nil {
 			return nil, err
 		}
 		scores := scoreMap(scored)
-		for _, event := range priced {
-			if !liveIDs[event.ID] {
+		for _, row := range priced {
+			if !liveIDs[row.ID] {
 				continue
 			}
-			score, ok := scores[event.ID]
+			current, ok := scores[row.ID]
 			if !ok {
-				continue // never fabricate the independent quote score gate
+				continue // The independent score gate must never be fabricated.
 			}
-			converted := convertEvent(event, score, p.bookmaker, now)
-			if len(converted.Quotes) > 0 {
-				out = append(out, converted)
+			event := convertEvent(row, current, p.bookmaker, now)
+			if len(event.Quotes) > 0 {
+				out = append(out, event)
 			}
 		}
 	}
@@ -147,9 +140,10 @@ func (p *Provider) get(ctx context.Context, path string, params url.Values, targ
 	if err != nil {
 		return err
 	}
+	request.Header.Set("X-API-Key", p.apiKey)
 	response, err := p.httpClient.Do(request)
 	if err != nil {
-		return fmt.Errorf("the odds api: request: %w", err)
+		return fmt.Errorf("parlay api: request: %w", err)
 	}
 	defer response.Body.Close()
 	body, err := io.ReadAll(response.Body)
@@ -157,10 +151,10 @@ func (p *Provider) get(ctx context.Context, path string, params url.Values, targ
 		return err
 	}
 	if response.StatusCode != http.StatusOK {
-		return fmt.Errorf("the odds api: status %d: %s", response.StatusCode, string(body))
+		return fmt.Errorf("parlay api: status %d: %s", response.StatusCode, string(body))
 	}
 	if err := json.Unmarshal(body, target); err != nil {
-		return fmt.Errorf("the odds api: decode: %w", err)
+		return fmt.Errorf("parlay api: decode: %w", err)
 	}
 	return nil
 }
@@ -195,8 +189,7 @@ func scoreMap(rows []scoreEventDTO) map[string]score {
 
 func convertEvent(row oddsEventDTO, current score, bookmaker string, receivedAt time.Time) odds.Event {
 	event := odds.Event{
-		Provider: "the-odds-api",
-		ID:       row.ID, Home: row.HomeTeam, Away: row.AwayTeam,
+		Provider: "parlay-api-shadow", ID: row.ID, Home: row.HomeTeam, Away: row.AwayTeam,
 		Competition: row.SportTitle, ScheduledAt: row.CommenceTime,
 		HomeScore: current.home, AwayScore: current.away,
 	}
@@ -214,15 +207,14 @@ func convertEvent(row oddsEventDTO, current score, bookmaker string, receivedAt 
 			}
 			pairs := map[float64]pair{}
 			for _, outcome := range market.Outcomes {
-				currentPair := pairs[outcome.Point]
+				pair := pairs[outcome.Point]
 				switch strings.ToLower(outcome.Name) {
 				case "over":
-					currentPair.over = outcome.Price
-					currentPair.link = outcome.Link
+					pair.over, pair.link = outcome.Price, outcome.Link
 				case "under":
-					currentPair.under = outcome.Price
+					pair.under = outcome.Price
 				}
-				pairs[outcome.Point] = currentPair
+				pairs[outcome.Point] = pair
 			}
 			updated := market.LastUpdate
 			if updated.IsZero() {
@@ -240,10 +232,10 @@ func convertEvent(row oddsEventDTO, current score, bookmaker string, receivedAt 
 					link = book.Link
 				}
 				event.Quotes = append(event.Quotes, odds.Quote{
-					Provider:        "the-odds-api",
-					ProviderEventID: row.ID, Bookmaker: book.Title, Market: "totals",
-					Line: line, Over: pair.over, Under: pair.under,
-					UpdatedAt: updated, ReceivedAt: receivedAt, DeepLink: link,
+					Provider: "parlay-api-shadow", ProviderEventID: row.ID,
+					Bookmaker: book.Title, Market: "totals", Line: line,
+					Over: pair.over, Under: pair.under, UpdatedAt: updated,
+					ReceivedAt: receivedAt, DeepLink: link,
 					HomeScore: current.home, AwayScore: current.away,
 				})
 			}
