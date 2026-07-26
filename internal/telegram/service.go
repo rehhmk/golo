@@ -22,7 +22,7 @@ const termsVersion = "beta-2026-07"
 type Store interface {
 	ListActiveSubscribers() ([]signals.Subscriber, error)
 	ListSignals(limit int) ([]signals.Decision, error)
-	RedeemInvitation(code string, subscriber signals.Subscriber) error
+	RedeemInvitation(code string, subscriber signals.Subscriber) (bool, error)
 	SaveDelivery(signals.Delivery) error
 }
 
@@ -173,6 +173,7 @@ type Update struct {
 			Username  string `json:"username"`
 		} `json:"from"`
 		Message struct {
+			ID   int `json:"message_id"`
 			Chat struct {
 				ID int64 `json:"id"`
 			} `json:"chat"`
@@ -184,8 +185,11 @@ func (s *Service) HandleWebhook(ctx context.Context, secret string, update Updat
 	if s.webhookSecret == "" || secret != s.webhookSecret {
 		return fmt.Errorf("invalid Telegram webhook secret")
 	}
-	if update.Message != nil && strings.HasPrefix(update.Message.Text, "/start ") {
-		code := strings.TrimSpace(strings.TrimPrefix(update.Message.Text, "/start "))
+	if update.Message != nil {
+		code := startCode(update.Message.Text)
+		if code == "" {
+			return nil
+		}
 		text := "<b>Golo Beta 18+</b>\n\nAlertas probabilísticos não garantem resultados. " +
 			"Ao continuar, você confirma ter 18 anos ou mais e aceita que todos os acertos e erros serão registrados."
 		button := map[string]any{"inline_keyboard": [][]map[string]string{{
@@ -202,13 +206,86 @@ func (s *Service) HandleWebhook(ctx context.Context, secret string, update Updat
 			DisplayName: name, Active: true, AdultConfirmed: true,
 			TermsVersion: termsVersion, CreatedAt: time.Now(),
 		}
-		if err := s.store.RedeemInvitation(code, subscriber); err != nil {
+		redeemed, err := s.store.RedeemInvitation(code, subscriber)
+		if err != nil {
+			_ = s.answerCallback(ctx, update.Callback.ID, "Convite inválido ou expirado.")
 			_, notifyErr := s.send(ctx, subscriber.TelegramChatID, "Convite inválido, expirado ou já utilizado.", "", nil)
 			return notifyErr
 		}
-		_, err := s.send(ctx, subscriber.TelegramChatID,
+		_ = s.answerCallback(ctx, update.Callback.ID, map[bool]string{
+			true: "Acesso ativado.", false: "O acesso já estava ativo.",
+		}[redeemed])
+		_ = s.removeInlineKeyboard(ctx, subscriber.TelegramChatID, update.Callback.Message.ID)
+		if !redeemed {
+			return nil
+		}
+		_, err = s.send(ctx, subscriber.TelegramChatID,
 			"✅ <b>Acesso ativado.</b>\nVocê receberá sinais qualificados e também todos os resultados — acertos, erros e anulados.", "", nil)
 		return err
+	}
+	return nil
+}
+
+func startCode(text string) string {
+	fields := strings.Fields(text)
+	if len(fields) != 2 {
+		return ""
+	}
+	command := strings.ToLower(fields[0])
+	if command != "/start" && !strings.HasPrefix(command, "/start@") {
+		return ""
+	}
+	return fields[1]
+}
+
+func (s *Service) answerCallback(ctx context.Context, callbackID, text string) error {
+	if callbackID == "" {
+		return nil
+	}
+	return s.post(ctx, "answerCallbackQuery", map[string]any{
+		"callback_query_id": callbackID,
+		"text":              text,
+	})
+}
+
+func (s *Service) removeInlineKeyboard(ctx context.Context, chatID int64, messageID int) error {
+	if messageID == 0 {
+		return nil
+	}
+	return s.post(ctx, "editMessageReplyMarkup", map[string]any{
+		"chat_id": chatID, "message_id": messageID,
+		"reply_markup": map[string]any{"inline_keyboard": []any{}},
+	})
+}
+
+func (s *Service) post(ctx context.Context, method string, payload any) error {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		fmt.Sprintf("%s/bot%s/%s", s.baseURL, s.token, method), bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Content-Type", "application/json")
+	response, err := s.client.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	raw, _ := io.ReadAll(response.Body)
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return fmt.Errorf("telegram status %d: %s", response.StatusCode, raw)
+	}
+	var result struct {
+		OK bool `json:"ok"`
+	}
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return err
+	}
+	if !result.OK {
+		return fmt.Errorf("telegram rejected %s", method)
 	}
 	return nil
 }

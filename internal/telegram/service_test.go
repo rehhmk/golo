@@ -16,6 +16,7 @@ import (
 
 type testStore struct {
 	deliveries []signals.Delivery
+	redeemed   bool
 }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -26,8 +27,12 @@ func (s *testStore) ListActiveSubscribers() ([]signals.Subscriber, error) {
 	return []signals.Subscriber{{ID: "u1", TelegramChatID: 42, Active: true}}, nil
 }
 func (s *testStore) ListSignals(int) ([]signals.Decision, error) { return nil, nil }
-func (s *testStore) RedeemInvitation(string, signals.Subscriber) error {
-	return nil
+func (s *testStore) RedeemInvitation(string, signals.Subscriber) (bool, error) {
+	if s.redeemed {
+		return false, nil
+	}
+	s.redeemed = true
+	return true, nil
 }
 func (s *testStore) SaveDelivery(d signals.Delivery) error {
 	s.deliveries = append(s.deliveries, d)
@@ -73,5 +78,70 @@ func TestSignalIncludesEvidenceWarningAndDeepLinkWithRetry(t *testing.T) {
 	markup, _ := json.Marshal(lastPayload["reply_markup"])
 	if !strings.Contains(string(markup), "https://book.example/market") {
 		t.Fatalf("deep link missing from %s", markup)
+	}
+}
+
+func TestStartCodeAcceptsPrivateAndGroupDeepLinks(t *testing.T) {
+	for input, want := range map[string]string{
+		"/start abc123":             "abc123",
+		"/start@AskGolo_bot abc123": "abc123",
+		"/START@ASKGOLO_BOT abc123": "abc123",
+		"/start":                    "",
+		"/help abc123":              "",
+	} {
+		if got := startCode(input); got != want {
+			t.Errorf("startCode(%q)=%q want %q", input, got, want)
+		}
+	}
+}
+
+func TestRepeatedInvitationCallbackIsAcknowledgedWithoutFalseInvalidMessage(t *testing.T) {
+	var methods []string
+	var texts []string
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		methods = append(methods, request.URL.Path)
+		var payload map[string]any
+		_ = json.NewDecoder(request.Body).Decode(&payload)
+		if text, ok := payload["text"].(string); ok {
+			texts = append(texts, text)
+		}
+		return &http.Response{
+			StatusCode: 200,
+			Body:       io.NopCloser(strings.NewReader(`{"ok":true,"result":{"message_id":99}}`)),
+			Header:     make(http.Header),
+		}, nil
+	})}
+	store := &testStore{}
+	service := New("token", "secret", store)
+	service.baseURL = "https://telegram.fixture.invalid"
+	service.client = client
+
+	var update Update
+	raw := `{
+		"callback_query": {
+			"id": "callback-1",
+			"data": "accept:invite-code",
+			"from": {"id": 7, "first_name": "Enzo", "username": "enzo"},
+			"message": {"message_id": 42, "chat": {"id": 123}}
+		}
+	}`
+	if err := json.Unmarshal([]byte(raw), &update); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.HandleWebhook(context.Background(), "secret", update); err != nil {
+		t.Fatal(err)
+	}
+	update.Callback.ID = "callback-2"
+	if err := service.HandleWebhook(context.Background(), "secret", update); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(methods) != 5 {
+		t.Fatalf("Telegram calls=%v, want answer/edit/send then answer/edit", methods)
+	}
+	for _, text := range texts {
+		if strings.Contains(text, "inválido") {
+			t.Fatalf("retry emitted false invalid message: %q", text)
+		}
 	}
 }

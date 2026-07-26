@@ -252,21 +252,33 @@ func (s *SQLiteStore) ListInvitations() ([]signals.Invitation, error) {
 	return out, rows.Err()
 }
 
-func (s *SQLiteStore) RedeemInvitation(code string, subscriber signals.Subscriber) error {
+// RedeemInvitation atomically activates access and reports whether this call
+// performed the redemption. Telegram may deliver the same callback more than
+// once, so a retry from the same chat is a successful no-op. A different chat
+// still cannot reuse the one-time code.
+func (s *SQLiteStore) RedeemInvitation(code string, subscriber signals.Subscriber) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	tx, err := s.db.Begin()
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer tx.Rollback()
 	var expires, access time.Time
 	var used sql.NullTime
-	if err := tx.QueryRow(`SELECT expires_at, access_until, used_at FROM invitations WHERE code=?`, code).Scan(&expires, &access, &used); err != nil {
-		return err
+	var usedBy sql.NullInt64
+	if err := tx.QueryRow(`SELECT expires_at, access_until, used_at, used_by_chat_id FROM invitations WHERE code=?`, code).
+		Scan(&expires, &access, &used, &usedBy); err != nil {
+		return false, err
 	}
-	if used.Valid || time.Now().After(expires) {
-		return fmt.Errorf("invitation is expired or already used")
+	if used.Valid {
+		if usedBy.Valid && usedBy.Int64 == subscriber.TelegramChatID {
+			return false, nil
+		}
+		return false, fmt.Errorf("invitation is expired or already used")
+	}
+	if time.Now().After(expires) {
+		return false, fmt.Errorf("invitation is expired or already used")
 	}
 	subscriber.ExpiresAt = access
 	if _, err := tx.Exec(`INSERT INTO subscribers (id, telegram_chat_id, display_name, active, terms_version, adult_confirmed, expires_at, created_at)
@@ -275,12 +287,16 @@ func (s *SQLiteStore) RedeemInvitation(code string, subscriber signals.Subscribe
 		terms_version=excluded.terms_version, adult_confirmed=excluded.adult_confirmed, expires_at=excluded.expires_at`,
 		subscriber.ID, subscriber.TelegramChatID, subscriber.DisplayName, subscriber.Active,
 		subscriber.TermsVersion, subscriber.AdultConfirmed, subscriber.ExpiresAt, subscriber.CreatedAt); err != nil {
-		return err
+		return false, err
 	}
-	if _, err := tx.Exec(`UPDATE invitations SET used_at=? WHERE code=?`, time.Now(), code); err != nil {
-		return err
+	if _, err := tx.Exec(`UPDATE invitations SET used_at=?, used_by_chat_id=? WHERE code=?`,
+		time.Now(), subscriber.TelegramChatID, code); err != nil {
+		return false, err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (s *SQLiteStore) ListSubscribers() ([]signals.Subscriber, error) {
