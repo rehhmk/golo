@@ -48,6 +48,12 @@ export interface MatchState {
   awayTeamId: string;
   competitionId: string;
   seasonId?: string;
+  // Display names. Providers that identify teams by numeric ID send these
+  // separately; use the teamLabel/competitionLabel helpers rather than
+  // reading them directly, so the ID still shows when a name is absent.
+  homeTeamName?: string;
+  awayTeamName?: string;
+  competitionName?: string;
 }
 
 export interface Probabilities {

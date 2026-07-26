@@ -25,14 +25,22 @@ type Server struct {
 	replayCtrl ReplayController
 	mu         sync.RWMutex
 	liveCache  map[string]publisher.MatchUpdate
+
+	// modelVersion scopes /api/metrics to the model actually running.
+	modelVersion string
 }
 
-func NewServer(store *eventstore.SQLiteStore, pub *publisher.Publisher, replayCtrl ReplayController) *Server {
+// NewServer builds the HTTP API. modelVersion identifies the model currently
+// loaded, so /api/metrics can report that model's own accuracy rather than a
+// blend of every version the database has ever seen. Empty means "evaluate
+// everything", which is only appropriate when no model is loaded.
+func NewServer(store *eventstore.SQLiteStore, pub *publisher.Publisher, replayCtrl ReplayController, modelVersion string) *Server {
 	srv := &Server{
-		store:      store,
-		pub:        pub,
-		replayCtrl: replayCtrl,
-		liveCache:  make(map[string]publisher.MatchUpdate),
+		store:        store,
+		pub:          pub,
+		replayCtrl:   replayCtrl,
+		liveCache:    make(map[string]publisher.MatchUpdate),
+		modelVersion: modelVersion,
 	}
 
 	// Listen to publisher updates to maintain an in-memory cache of live matches
@@ -218,7 +226,7 @@ func (s *Server) handleReplayControl(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
-	predictions, err := s.store.GetAllPredictions()
+	predictions, err := s.store.GetPredictionsForModel(s.modelVersion)
 	if err != nil {
 		http.Error(w, "Failed to load predictions: "+err.Error(), http.StatusInternalServerError)
 		return

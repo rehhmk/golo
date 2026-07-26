@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { ArrowLeft, Activity, ShieldCheck, Clock, Flame, AlertTriangle, Layers } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import { MatchUpdate, Prediction } from '../types';
+import { awayLabel, competitionLabel, homeLabel } from "@/lib/utils"
 
 interface MatchDetailProps {
   matchUpdate?: MatchUpdate;
@@ -73,10 +74,10 @@ export const MatchDetail: React.FC<MatchDetailProps> = ({ matchUpdate, predictio
               <span className="text-xs font-semibold text-rose-500 bg-rose-500/10 px-2.5 py-0.5 rounded-full border border-rose-500/20 font-mono">
                 LIVE {minute}'
               </span>
-              <span className="text-xs text-slate-400 font-medium">{state.competitionId}</span>
+              <span className="text-xs text-slate-400 font-medium">{competitionLabel(state)}</span>
             </div>
             <h1 className="text-2xl sm:text-3xl font-black text-slate-50 tracking-tight">
-              {state.homeTeamId} <span className="text-slate-500 font-normal">vs</span> {state.awayTeamId}
+              {homeLabel(state)} <span className="text-slate-500 font-normal">vs</span> {awayLabel(state)}
             </h1>
           </div>
 

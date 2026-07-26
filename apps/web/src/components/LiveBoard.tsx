@@ -2,7 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { GameCard } from './GameCard';
 import { MatchUpdate } from '../types';
 import { Search } from 'lucide-react';
-import { cn } from '@/lib/utils';
+import { awayLabel, cn, competitionLabel, homeLabel } from "@/lib/utils"
 import { PageHeader } from './PageHeader';
 
 interface LiveBoardProps {
@@ -21,9 +21,9 @@ export const LiveBoard: React.FC<LiveBoardProps> = ({ matches, onSelectMatch, pr
       .filter((m) => {
         const query = searchQuery.toLowerCase();
         const matchesQuery =
-          m.state.homeTeamId.toLowerCase().includes(query) ||
-          m.state.awayTeamId.toLowerCase().includes(query) ||
-          m.state.competitionId.toLowerCase().includes(query);
+          homeLabel(m.state).toLowerCase().includes(query) ||
+          awayLabel(m.state).toLowerCase().includes(query) ||
+          competitionLabel(m.state).toLowerCase().includes(query);
 
         const isHot = m.prediction.probabilities.goalNext10m >= 0.75;
         return matchesQuery && (!filterHotOnly || isHot);
@@ -35,7 +35,7 @@ export const LiveBoard: React.FC<LiveBoardProps> = ({ matches, onSelectMatch, pr
         if (sortBy === 'momentum') {
           return b.prediction.probabilities.goalNext5m - a.prediction.probabilities.goalNext5m;
         }
-        return a.state.competitionId.localeCompare(b.state.competitionId);
+        return competitionLabel(a.state).localeCompare(competitionLabel(b.state));
       });
   }, [matches, sortBy, searchQuery, filterHotOnly]);
 

@@ -1,0 +1,33 @@
+{
+  "modelVersion": "hazard_v1.1.0",
+  "featureVersion": "v1.1.0",
+  "modelType": "poisson_hazard",
+  "baseGoalsPer90": 1.918188,
+  "coefficients": {
+    "match_time_frac": 0.77584455,
+    "match_time_frac_sq": -0.50498987,
+    "abs_score_diff": 0.02882643,
+    "goals_so_far": 0.00276526
+  },
+  "redCardCoefficient": 0.00422537,
+  "activityCoefficients": {
+    "shots_10m_total": 0.06,
+    "shots_on_target_10m_total": 0.12,
+    "corners_10m_total": 0.03,
+    "dangerous_attacks_10m_total": 0.008,
+    "xg_10m_total": 0.9
+  },
+  "activityCenters": {
+    "shots_10m_total": 2.2,
+    "shots_on_target_10m_total": 0.75,
+    "corners_10m_total": 1.05,
+    "dangerous_attacks_10m_total": 6.8,
+    "xg_10m_total": 0.0
+  },
+  "minMultiplier": 0.25,
+  "maxMultiplier": 4.0,
+  "trainedUntil": "2026-07-26",
+  "trainingMatches": 3282,
+  "notes": "Base rate and the match_second / abs_score_diff / goals_so_far / red-card terms are fitted by Poisson regression on 3282 historical matches, validated on a held-out most-recent season per league. The activityCoefficients are NOT fitted: SportMonks stores shots, corners and attacks as cumulative fixture statistics rather than timestamped events, so no point-in-time value is recoverable from history. They are applied relative to activityCenters so ordinary activity leaves the fitted intensity unchanged. xG is unavailable on this plan and stays at zero.",
+  "sha256": "f9c73a6de3ec12111374e4f1a6a6de2d4b786eb1f8961ca28010dc9aaf3e4fc8"
+}

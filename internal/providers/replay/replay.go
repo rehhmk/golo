@@ -62,6 +62,13 @@ func (r *ReplayProvider) FetchEventsSince(ctx context.Context, matchID string, l
 	return batch, nil
 }
 
+// Snapshot reports no provider view: a replay reconstructs state purely by
+// re-reducing its recorded event stream, which is what makes replay output
+// comparable to the original live run.
+func (r *ReplayProvider) Snapshot(matchID string) (domain.LiveSnapshot, bool) {
+	return domain.LiveSnapshot{}, false
+}
+
 func (r *ReplayProvider) SetSpeed(speed ReplaySpeed) {
 	r.speed = speed
 }

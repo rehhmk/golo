@@ -309,6 +309,19 @@ func (s *SQLiteStore) GetMatchPredictions(matchID string) ([]domain.Prediction, 
 // GetAllPredictions returns every stored prediction across all matches,
 // ordered by match and match-second, for aggregate evaluation.
 func (s *SQLiteStore) GetAllPredictions() ([]domain.Prediction, error) {
+	return s.getPredictions("")
+}
+
+// GetPredictionsForModel returns only the predictions a given model version
+// produced. Accuracy reported across mixed versions describes no model that
+// exists: the store accumulates every generation ever run, so a since-replaced
+// model keeps dragging the published figures around long after its last
+// prediction. Passing an empty version returns everything.
+func (s *SQLiteStore) GetPredictionsForModel(modelVersion string) ([]domain.Prediction, error) {
+	return s.getPredictions(modelVersion)
+}
+
+func (s *SQLiteStore) getPredictions(modelVersion string) ([]domain.Prediction, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -317,7 +330,18 @@ func (s *SQLiteStore) GetAllPredictions() ([]domain.Prediction, error) {
 	FROM predictions
 	ORDER BY match_id ASC, as_of_second ASC;
 	`
-	rows, err := s.db.Query(query)
+	args := []interface{}{}
+	if modelVersion != "" {
+		query = `
+	SELECT match_id, as_of_second, prob_5m, prob_10m, prob_ft, data_quality, confidence_band, status, model_version, prediction_sequence, feature_version, created_at
+	FROM predictions
+	WHERE model_version = ?
+	ORDER BY match_id ASC, as_of_second ASC;
+	`
+		args = append(args, modelVersion)
+	}
+
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}

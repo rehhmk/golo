@@ -99,6 +99,14 @@ type MatchState struct {
 	// Versioning for deterministic replay comparison.
 	StateVersion int `json:"stateVersion"`
 
+	// ObservedFromSecond is the match clock at which Golo started watching,
+	// or -1 before the first observation. Rolling windows are empty until
+	// enough time has passed since then, and an empty window means "not
+	// observed yet", not "nothing happened" — consumers weighing activity
+	// need to tell those apart or they read the opening minutes of every
+	// match, and every match joined in progress, as unusually quiet.
+	ObservedFromSecond int `json:"observedFromSecond"`
+
 	// Timestamps of significant recent events (for temporal features).
 	LastGoalSecond      *int `json:"lastGoalSecond,omitempty"`
 	LastShotSecond      *int `json:"lastShotSecond,omitempty"`
@@ -110,9 +118,61 @@ type MatchState struct {
 	HomeTeamID string `json:"homeTeamId"`
 	AwayTeamID string `json:"awayTeamId"`
 
+	// Human-readable names for display. Providers that identify teams and
+	// competitions by opaque numeric IDs supply these separately; when a
+	// provider has no separate name the ID doubles as the label, so consumers
+	// should fall back to the ID rather than render an empty string.
+	HomeTeamName    string `json:"homeTeamName,omitempty"`
+	AwayTeamName    string `json:"awayTeamName,omitempty"`
+	CompetitionName string `json:"competitionName,omitempty"`
+
 	// Competition context.
 	CompetitionID string `json:"competitionId"`
 	SeasonID      string `json:"seasonId,omitempty"`
+}
+
+// TeamStatTotals holds cumulative match statistics for one team, as reported
+// by a provider that publishes running totals rather than discrete events.
+type TeamStatTotals struct {
+	ShotsOnTarget    int     `json:"shotsOnTarget"`
+	ShotsOffTarget   int     `json:"shotsOffTarget"`
+	ShotsBlocked     int     `json:"shotsBlocked"`
+	Corners          int     `json:"corners"`
+	Fouls            int     `json:"fouls"`
+	DangerousAttacks int     `json:"dangerousAttacks"`
+	Possession       float64 `json:"possession"`
+}
+
+// LiveSnapshot is a provider's authoritative point-in-time view of a match:
+// the data a feed publishes as a current value or a running total rather than
+// as a discrete event — the match clock above all, plus status, score and
+// aggregate statistics.
+//
+// It exists because an event feed alone cannot drive a live probability. A
+// match can go ten minutes without emitting a single event, yet every horizon
+// Golo predicts ("goal in the next 5 minutes", "goal before full time")
+// depends on the clock having moved. Reducing only events leaves ClockSeconds
+// frozen at the last goal or card, so the published probability silently goes
+// stale. Snapshots let the reducer advance state on every poll tick.
+//
+// The HasScore and HasStats flags distinguish "this provider does not report
+// this data" from "the reported value is genuinely zero". Without them a feed
+// that omits the score would silently reset a 2-0 match to 0-0 on every poll.
+type LiveSnapshot struct {
+	MatchID      string      `json:"matchId"`
+	Status       MatchStatus `json:"status"`
+	Period       int         `json:"period"`
+	ClockSeconds int         `json:"clockSeconds"`
+
+	HasScore bool       `json:"hasScore"`
+	Score    ScoreState `json:"score"`
+
+	HasStats bool           `json:"hasStats"`
+	Home     TeamStatTotals `json:"home"`
+	Away     TeamStatTotals `json:"away"`
+
+	ProviderTime time.Time `json:"providerTime"`
+	ReceivedAt   time.Time `json:"receivedAt"`
 }
 
 // PredictionStatus indicates the operational confidence of a prediction.
@@ -179,6 +239,9 @@ type Match struct {
 	SeasonID        string      `json:"seasonId,omitempty"`
 	HomeTeamID      string      `json:"homeTeamId"`
 	AwayTeamID      string      `json:"awayTeamId"`
+	HomeTeamName    string      `json:"homeTeamName,omitempty"`
+	AwayTeamName    string      `json:"awayTeamName,omitempty"`
+	CompetitionName string      `json:"competitionName,omitempty"`
 	ScheduledAt     time.Time   `json:"scheduledAt"`
 	Status          MatchStatus `json:"status"`
 	CreatedAt       time.Time   `json:"createdAt"`
@@ -234,5 +297,12 @@ func InitialState(match Match) MatchState {
 		CompetitionID: match.CompetitionID,
 		SeasonID:      match.SeasonID,
 		StateVersion:  0,
+
+		// Nothing observed yet; the first snapshot sets this.
+		ObservedFromSecond: -1,
+
+		HomeTeamName:    match.HomeTeamName,
+		AwayTeamName:    match.AwayTeamName,
+		CompetitionName: match.CompetitionName,
 	}
 }

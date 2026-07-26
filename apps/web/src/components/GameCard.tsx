@@ -1,8 +1,7 @@
 import React from 'react';
 import { MatchUpdate } from '../types';
 import { Sparkline } from '@/components/ui/sparkline';
-import { cn } from '@/lib/utils';
-
+import { awayLabel, cn, competitionLabel, homeLabel } from "@/lib/utils"
 interface GameCardProps {
   matchUpdate: MatchUpdate;
   onSelect: (matchId: string) => void;
@@ -48,7 +47,7 @@ export const GameCard: React.FC<GameCardProps> = ({ matchUpdate, onSelect, histo
         <div className="flex items-baseline justify-between gap-3 mb-3">
           <div className="flex items-baseline gap-2 min-w-0">
             <span className="font-mono text-[11px] tabular-nums text-rose-400 shrink-0">{minute}&apos;</span>
-            <span className="text-[11px] text-slate-500 truncate">{state.competitionId}</span>
+            <span className="text-[11px] text-slate-500 truncate">{competitionLabel(state)}</span>
           </div>
           <span className="font-mono text-[10px] uppercase tracking-wider text-slate-600 shrink-0">
             {prediction.confidenceBand}
@@ -57,8 +56,8 @@ export const GameCard: React.FC<GameCardProps> = ({ matchUpdate, onSelect, histo
 
         {/* Teams + score */}
         <div className="space-y-1 mb-3.5">
-          <TeamRow name={state.homeTeamId} score={state.score.home} red={state.redCards.home > 0} />
-          <TeamRow name={state.awayTeamId} score={state.score.away} red={state.redCards.away > 0} />
+          <TeamRow name={homeLabel(state)} score={state.score.home} red={state.redCards.home > 0} />
+          <TeamRow name={awayLabel(state)} score={state.score.away} red={state.redCards.away > 0} />
         </div>
 
         {/* Pressure sparkline — real rolling history of this match's own probability */}
