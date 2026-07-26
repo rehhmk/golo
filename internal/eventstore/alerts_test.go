@@ -105,3 +105,38 @@ func TestInvitationIsOneTimeAndSetsAccessExpiry(t *testing.T) {
 		t.Fatalf("access expiry=%v want %v", active[0].ExpiresAt, access)
 	}
 }
+
+func TestMigrationDisarmsLegacyStrategyWithoutRevealedLockedTest(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy.db")
+	store, err := NewSQLiteStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	definition := scenario.DefaultDefinition()
+	definition.ID, definition.Name = "legacy", "Legacy armed"
+	definition.Conditions = []scenario.Condition{{
+		Field: scenario.FieldMinute, Operator: scenario.OpGreaterOrEqual, Value: 70,
+	}}
+	if err := store.SaveStrategy(signals.StoredStrategy{
+		Definition: definition, Armed: true,
+		Report: scenario.QualificationReport{Qualified: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := NewSQLiteStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	strategies, err := reopened.ListStrategies()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(strategies) != 1 || strategies[0].Armed {
+		t.Fatalf("legacy strategy remained armed after migration: %+v", strategies)
+	}
+}
