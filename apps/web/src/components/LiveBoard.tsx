@@ -9,9 +9,69 @@ interface LiveBoardProps {
   matches: MatchUpdate[];
   onSelectMatch: (matchId: string) => void;
   probHistory?: Record<string, number[]>;
+  /** False until the first answer arrives, so "loading" is not shown as "empty". */
+  hasLoaded?: boolean;
+  /** False when the last request failed, which is not the same as no matches. */
+  isConnected?: boolean;
 }
 
-export const LiveBoard: React.FC<LiveBoardProps> = ({ matches, onSelectMatch, probHistory = {} }) => {
+// EmptyState distinguishes the three reasons the board can be blank. They
+// look identical to a user but mean opposite things, and conflating them is
+// what let fabricated matches sit on screen looking live: a healthy backend
+// with nothing being played is a normal Tuesday, while a failed request is a
+// problem the reader needs to know about before trusting anything else here.
+const EmptyState: React.FC<{ hasLoaded: boolean; isConnected: boolean; hasMatches: boolean }> = ({
+  hasLoaded,
+  isConnected,
+  hasMatches,
+}) => {
+  if (!hasLoaded) {
+    return (
+      <div className="py-20 text-center">
+        <p className="text-[13px] text-slate-400">Carregando partidas…</p>
+      </div>
+    );
+  }
+
+  if (!isConnected) {
+    return (
+      <div className="py-20 text-center">
+        <p className="text-[13px] text-amber-300/90">Sem conexão com o motor</p>
+        <p className="text-[12px] text-slate-500 mt-1.5 max-w-md mx-auto leading-relaxed">
+          Não foi possível falar com o servidor. O que estiver na tela pode estar
+          desatualizado — nada aqui é dado de demonstração.
+        </p>
+      </div>
+    );
+  }
+
+  if (hasMatches) {
+    return (
+      <div className="py-20 text-center">
+        <p className="text-[13px] text-slate-400">Nenhuma partida encontrada</p>
+        <p className="text-[12px] text-slate-600 mt-1">Ajuste a busca ou remova os filtros.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="py-20 text-center">
+      <p className="text-[13px] text-slate-400">Nenhuma partida ao vivo agora</p>
+      <p className="text-[12px] text-slate-600 mt-1.5 max-w-md mx-auto leading-relaxed">
+        O Golo acompanha Brasileirão, Libertadores, MLS e Liga MX. As partidas
+        aparecem aqui assim que a bola rolar.
+      </p>
+    </div>
+  );
+};
+
+export const LiveBoard: React.FC<LiveBoardProps> = ({
+  matches,
+  onSelectMatch,
+  probHistory = {},
+  hasLoaded = true,
+  isConnected = true,
+}) => {
   const [sortBy, setSortBy] = useState<'prob' | 'momentum' | 'league'>('prob');
   const [searchQuery, setSearchQuery] = useState('');
   const [filterHotOnly, setFilterHotOnly] = useState(false);
@@ -116,10 +176,11 @@ export const LiveBoard: React.FC<LiveBoardProps> = ({ matches, onSelectMatch, pr
           ))}
         </div>
       ) : (
-        <div className="py-20 text-center">
-          <p className="text-[13px] text-slate-400">Nenhuma partida encontrada</p>
-          <p className="text-[12px] text-slate-600 mt-1">Ajuste a busca ou remova os filtros.</p>
-        </div>
+        <EmptyState
+          hasLoaded={hasLoaded}
+          isConnected={isConnected}
+          hasMatches={matches.length > 0}
+        />
       )}
     </div>
   );

@@ -29,21 +29,17 @@ export const MatchDetail: React.FC<MatchDetailProps> = ({ matchUpdate, predictio
   const prob10m = Math.round(prediction.probabilities.goalNext10m * 100);
   const probFT = Math.round(prediction.probabilities.goalBeforeFullTime * 100);
 
-  // Generate synthetic chart data if history is short
-  const chartData = predictionsHistory.length > 0
-    ? predictionsHistory.map((p) => ({
-        minute: `${Math.floor(p.asOfMatchSecond / 60)}'`,
-        prob10m: Math.round(p.probabilities.goalNext10m * 100),
-        prob5m: Math.round(p.probabilities.goalNext5m * 100),
-      }))
-    : Array.from({ length: 15 }, (_, i) => {
-        const m = Math.max(0, minute - 14 + i);
-        return {
-          minute: `${m}'`,
-          prob10m: Math.min(95, Math.max(10, prob10m + (i - 7) * 3)),
-          prob5m: Math.min(90, Math.max(5, prob5m + (i - 7) * 2)),
-        };
-      });
+  // Only real observations. This previously fell back to a fabricated +3pp
+  // per minute ramp whenever history was short, drawn under the caption
+  // "curva contínua de intensidade calculada pelo modelo" with nothing to
+  // distinguish it from a genuine reading — and since history only arrives
+  // from an async fetch, that invented line was what most readers saw first.
+  const chartData = predictionsHistory.map((p) => ({
+    minute: `${Math.floor(p.asOfMatchSecond / 60)}'`,
+    prob10m: Math.round(p.probabilities.goalNext10m * 100),
+    prob5m: Math.round(p.probabilities.goalNext5m * 100),
+  }));
+  const hasEnoughHistory = chartData.length >= 2;
 
   const stats10m = state.windows?.[600];
 
@@ -140,6 +136,15 @@ export const MatchDetail: React.FC<MatchDetailProps> = ({ matchUpdate, predictio
           </div>
         </div>
 
+        {!hasEnoughHistory ? (
+          <div className="h-64 w-full pt-4 flex flex-col items-center justify-center text-center">
+            <p className="text-[13px] text-slate-400">Histórico ainda insuficiente</p>
+            <p className="text-[12px] text-slate-600 mt-1.5 max-w-sm leading-relaxed">
+              A curva aparece assim que houver ao menos duas leituras registradas
+              desta partida.
+            </p>
+          </div>
+        ) : (
         <div className="h-64 w-full pt-4">
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart data={chartData}>
@@ -159,6 +164,7 @@ export const MatchDetail: React.FC<MatchDetailProps> = ({ matchUpdate, predictio
             </AreaChart>
           </ResponsiveContainer>
         </div>
+        )}
       </div>
 
       {/* Rolling Stats & Feed Audit Row */}

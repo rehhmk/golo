@@ -232,6 +232,29 @@ func (s *SQLiteStore) migrate() error {
 		value_json TEXT NOT NULL,
 		updated_at TIMESTAMP NOT NULL
 	);
+
+	CREATE TABLE IF NOT EXISTS odds_provider_observations (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		provider TEXT NOT NULL,
+		observed_at TIMESTAMP NOT NULL,
+		accepted_events INTEGER NOT NULL,
+		accepted_quotes INTEGER NOT NULL,
+		payload_json TEXT NOT NULL
+	);
+	CREATE INDEX IF NOT EXISTS idx_odds_observation_provider_time
+		ON odds_provider_observations(provider, observed_at DESC);
+
+	CREATE TABLE IF NOT EXISTS odds_provider_comparisons (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		observed_at TIMESTAMP NOT NULL,
+		primary_provider TEXT NOT NULL,
+		shadow_provider TEXT NOT NULL,
+		matched_events INTEGER NOT NULL,
+		comparable_quotes INTEGER NOT NULL,
+		payload_json TEXT NOT NULL
+	);
+	CREATE INDEX IF NOT EXISTS idx_odds_comparison_time
+		ON odds_provider_comparisons(observed_at DESC);
 	`
 	if _, err := s.db.Exec(schema); err != nil {
 		return err

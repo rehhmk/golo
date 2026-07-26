@@ -23,3 +23,6 @@ apps/web/.firebase/
 .DS_Store
 ml/data/
 ml/.venv/
+
+# Firebase CLI debug output
+apps/web/firebase-debug.log

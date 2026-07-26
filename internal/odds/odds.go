@@ -14,6 +14,7 @@ import (
 )
 
 type Quote struct {
+	Provider        string    `json:"provider"`
 	ProviderEventID string    `json:"providerEventId"`
 	Bookmaker       string    `json:"bookmaker"`
 	Market          string    `json:"market"`
@@ -30,6 +31,7 @@ type Quote struct {
 }
 
 type Event struct {
+	Provider    string    `json:"provider"`
 	ID          string    `json:"id"`
 	Home        string    `json:"home"`
 	Away        string    `json:"away"`

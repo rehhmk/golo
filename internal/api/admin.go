@@ -138,6 +138,18 @@ func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request) {
 			engine = s.signalEngine.Health()
 		}
 		writeJSON(w, map[string]any{"odds": provider, "modelAndDelivery": engine})
+	case path == "provider-observations" && r.Method == http.MethodGet:
+		observations, err := s.store.ListProviderObservations(300)
+		if err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		comparisons, err := s.store.ListProviderComparisons(300)
+		if err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		writeJSON(w, map[string]any{"observations": observations, "comparisons": comparisons})
 	case path == "settings" && r.Method == http.MethodGet:
 		settings, err := s.store.LoadSignalSettings()
 		if err != nil {

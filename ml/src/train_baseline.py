@@ -225,14 +225,41 @@ class FittedHazard:
 
 
 def fit(df_train, activity_features=None):
-    names = FEATURES + [RED_FEATURE] + list(activity_features or [])
+    requested = FEATURES + [RED_FEATURE] + list(activity_features or [])
+
+    # Drop covariates that never vary. A column of constant zeros carries no
+    # information but does make the design matrix rank-deficient, and with
+    # almost no regularisation the solver is then free to put an arbitrarily
+    # large coefficient in the null space. That is not hypothetical: including
+    # dangerous_attacks_10m_total — which SportMonks publishes only as a
+    # cumulative statistic and never on the timeline, so it is always zero
+    # here — produced a coefficient of -8e11 and drove the fitted base rate to
+    # zero, while the model still reported itself as alert-qualified.
+    #
+    # Dropped features keep their documented prior rather than a fitted value.
+    # Constancy is tested with the peak-to-peak range rather than the standard
+    # deviation. Summing 250k identical values accumulates floating-point
+    # error, so a genuinely constant column can report a standard deviation
+    # around 1e-16 — which passes a "> 0" test and lets the degenerate column
+    # straight through. max minus min is exact.
+    names, dropped = [], []
+    for name in requested:
+        column = df_train[name].to_numpy(dtype=float)
+        if float(np.ptp(column)) > 0:
+            names.append(name)
+        else:
+            dropped.append(name)
+    if dropped:
+        print(f"  dropped constant features (kept at prior): {', '.join(dropped)}")
+    if not names:
+        raise RuntimeError("every covariate is constant; nothing to fit")
+
     X = df_train[names].to_numpy(dtype=float)
     y = df_train["goals_in_slice"].to_numpy(dtype=float)
     exposure = df_train["exposure"].to_numpy(dtype=float)
 
     mu = X.mean(axis=0)
     sd = X.std(axis=0)
-    sd[sd == 0] = 1.0
     Xs = (X - mu) / sd
 
     # PoissonRegressor optimises a weighted mean of y/exposure, which is
@@ -244,6 +271,24 @@ def fit(df_train, activity_features=None):
 
     raw_coef = model.coef_ / sd
     raw_intercept = model.intercept_ - float(np.sum(model.coef_ * mu / sd))
+
+    # Guard against a numerically degenerate solution being shipped as a
+    # result. These check the transformed values, which are what the artifact
+    # actually carries — checking the standardised intercept instead would
+    # miss exactly the blow-up this exists to catch. A real football base rate
+    # is 2-3 goals per 90 minutes.
+    base_per_90 = math.exp(raw_intercept) * REGULATION_SECONDS
+    if not (0.5 < base_per_90 < 10.0):
+        raise RuntimeError(
+            f"degenerate fit: base rate {base_per_90:.4f} goals/90min is outside any plausible range"
+        )
+    if np.max(np.abs(raw_coef)) > 50:
+        worst = names[int(np.argmax(np.abs(raw_coef)))]
+        raise RuntimeError(
+            f"degenerate fit: coefficient for {worst} is {np.max(np.abs(raw_coef)):.2e}, "
+            f"which indicates a rank-deficient design"
+        )
+
     return FittedHazard(names, raw_coef, raw_intercept)
 
 
@@ -283,6 +328,36 @@ def metrics(probs, labels):
         "mean_pred": float(p.mean()),
         "base_rate": float(labels.mean()),
     }
+
+
+def brier_advantage(fitted_probs, constant_probs, labels, fixture_ids, draws=2000, seed=7):
+    """Is the model's Brier advantage over the constant rate real, or noise?
+
+    Returns (mean_delta, low, high) where a negative delta means the model is
+    better. Negative across the whole interval is the only result that counts
+    as evidence.
+
+    The comparison is bootstrapped over *matches*, not over slices. Every
+    one-minute slice within a match shares that match's outcome, so treating
+    slices as independent would shrink the interval by more than an order of
+    magnitude and make a coin-flip difference look decisive. That matters
+    concretely here: comparing the point estimates alone declared the model
+    qualified on a Brier difference of 0.00006, which this test shows is
+    indistinguishable from zero.
+    """
+    rng = np.random.default_rng(seed)
+    per_slice = (fitted_probs - labels) ** 2 - (constant_probs - labels) ** 2
+
+    unique_ids = np.unique(fixture_ids)
+    per_match = np.array([per_slice[fixture_ids == fid].mean() for fid in unique_ids])
+    if len(per_match) < 2:
+        return float(per_match.mean()) if len(per_match) else 0.0, -math.inf, math.inf
+
+    means = np.array([
+        rng.choice(per_match, len(per_match), replace=True).mean() for _ in range(draws)
+    ])
+    low, high = np.percentile(means, [2.5, 97.5])
+    return float(per_match.mean()), float(low), float(high)
 
 
 def constant_rate_baseline(df_train, df_test):
@@ -429,8 +504,27 @@ def main():
         report.append(f"| {name} | {value:+.8f} |")
 
     validation_matches = int(df_validation["fixture_id"].nunique())
-    one_qualified = summary["ft"]["fitted"]["brier"] < summary["ft"]["constant"]["brier"]
-    two_qualified = summary["two_ft"]["fitted"]["brier"] < summary["two_ft"]["constant"]["brier"]
+    # Qualification requires the advantage to be real, not merely numerically
+    # smaller. A bare point comparison qualified this model on a Brier
+    # difference of 0.00006 whose 95% interval ran from -0.0011 to +0.0008 —
+    # noise, presented as an edge, one gate away from arming live alerts.
+    fixture_ids = df_validation["fixture_id"].to_numpy()
+    advantage = {}
+    for key, label_col in (("ft", "label_ft"), ("two_ft", "label_two_ft")):
+        labels = df_validation[label_col].to_numpy(dtype=float)
+        advantage[key] = brier_advantage(
+            fitted_probs[key], const_probs[key], labels, fixture_ids
+        )
+
+    one_qualified = advantage["ft"][2] < 0
+    two_qualified = advantage["two_ft"][2] < 0
+
+    print()
+    print("vantagem sobre a taxa constante (bootstrap por partida, negativo = melhor):")
+    for key in ("ft", "two_ft"):
+        mean, low, high = advantage[key]
+        verdict = "real" if high < 0 else "indistinguivel de ruido"
+        print(f"  {key:7s} {mean:+.6f}  IC95 [{low:+.6f}, {high:+.6f}]  -> {verdict}")
     competition_rates = {}
     for league_id, rows in df.groupby("league_id"):
         exposure = float(rows["exposure"].sum())
@@ -440,14 +534,28 @@ def main():
         )
 
     if fitted_activity:
-        shipped_activity = {
-            name: round(float(final_coefs[name]), 8)
-            for name in activity_features
-        }
+        # A feature the fit dropped for having no variance keeps its documented
+        # prior — reporting it as fitted would claim evidence that does not
+        # exist. In practice this is xg_10m_total (unavailable on this plan)
+        # and dangerous_attacks_10m_total (published only as a cumulative
+        # statistic, never on the timeline).
+        shipped_activity = {}
+        held_at_prior = []
+        for name in activity_features:
+            if name in final_coefs:
+                shipped_activity[name] = round(float(final_coefs[name]), 8)
+            else:
+                shipped_activity[name] = ACTIVITY_PRIORS[name]
+                held_at_prior.append(name)
         activity_note = (
             f"Activity coefficients were fitted from timestamped timeline events in "
             f"{activity_match_count} matches."
         )
+        if held_at_prior:
+            activity_note += (
+                f" These remain documented priors because they are constant in the "
+                f"training data and cannot be fitted: {', '.join(sorted(held_at_prior))}."
+            )
     else:
         shipped_activity = dict(ACTIVITY_PRIORS)
         activity_note = (
@@ -483,6 +591,15 @@ def main():
             "twoGoalBaselineBrier": round(summary["two_ft"]["constant"]["brier"], 8),
             "oneGoalQualified": bool(one_qualified),
             "twoGoalQualified": bool(two_qualified),
+            "brierAdvantage": {
+                key: {
+                    "meanDelta": round(advantage[key][0], 8),
+                    "ci95Low": round(advantage[key][1], 8),
+                    "ci95High": round(advantage[key][2], 8),
+                    "clusteredByMatch": True,
+                }
+                for key in advantage
+            },
         },
         "notes": (
             "Base rate and the match_second / abs_score_diff / goals_so_far / red-card terms are "

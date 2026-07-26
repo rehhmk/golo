@@ -19,6 +19,7 @@ import (
 	"github.com/enzotriches/golo/internal/features"
 	"github.com/enzotriches/golo/internal/odds"
 	"github.com/enzotriches/golo/internal/odds/oddsapiio"
+	"github.com/enzotriches/golo/internal/odds/parlayapi"
 	"github.com/enzotriches/golo/internal/odds/theoddsapi"
 	"github.com/enzotriches/golo/internal/predictor"
 	"github.com/enzotriches/golo/internal/providers"
@@ -84,6 +85,8 @@ func main() {
 		2: predEngine.AlertQualified(2),
 	}, modelContract, predEngine.BaselineProbability, cfg.AlertEngineEnabled, cfg.TelegramEnabled)
 	oddsState := &liveOddsCache{provider: "not configured"}
+	shadowOddsState := &liveOddsCache{provider: "parlay-api-shadow", configured: false}
+	oddsMonitor := &providerMonitor{primary: oddsState, shadow: shadowOddsState}
 	if cfg.OddsAPIKey != "" {
 		var oddsProvider odds.Provider
 		switch cfg.OddsProvider {
@@ -94,8 +97,21 @@ func main() {
 		default:
 			log.Fatalf("unknown ODDS_PROVIDER %q", cfg.OddsProvider)
 		}
-		oddsState.provider = oddsProvider.Name()
-		go runOddsLoop(ctx, oddsProvider, cfg.OddsPollInterval, oddsState)
+		oddsState.provider, oddsState.configured = oddsProvider.Name(), true
+		go runOddsLoop(ctx, oddsProvider, cfg.OddsPollInterval, oddsState, store, nil)
+	}
+	if cfg.ParlayShadowEnabled {
+		if cfg.ParlayAPIKey == "" {
+			log.Println("Parlay shadow requested but PARLAY_API_KEY is missing; shadow collection remains disabled")
+		} else {
+			shadowProvider := parlayapi.New(
+				cfg.ParlayAPIKey, cfg.ParlayAPIBaseURL, cfg.ParlayBookmaker, cfg.ParlaySportKeys,
+			)
+			shadowOddsState.provider, shadowOddsState.configured = shadowProvider.Name(), true
+			go runOddsLoop(ctx, shadowProvider, cfg.OddsPollInterval, shadowOddsState, store, func() {
+				oddsMonitor.CompareAndPersist(store)
+			})
+		}
 	}
 
 	// 4. Initialize Data Provider (selected via PROVIDER env var: mock | sportmonks)
@@ -112,7 +128,7 @@ func main() {
 	server := api.NewServerWithAdmin(store, pub, nil, predEngine.ModelVersion(), api.AdminDependencies{
 		Auth: admin, Telegram: tg, SignalEngine: signalEngine,
 		DatasetPath: cfg.HistoricalDatasetPath, AllowedOrigin: cfg.AllowedWebOrigin,
-		ProviderHealth: oddsState.Health, ModelContract: modelContract,
+		ProviderHealth: oddsMonitor.Health, ModelContract: modelContract,
 	})
 
 	go func() {
@@ -296,9 +312,11 @@ type liveOddsCache struct {
 	errorCount  int
 	message     string
 	provider    string
+	configured  bool
+	observation odds.ProviderObservation
 }
 
-func (c *liveOddsCache) Merge(events []odds.Event) {
+func (c *liveOddsCache) Merge(events []odds.Event, observation odds.ProviderObservation) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	byID := make(map[string]odds.Event, len(c.events)+len(events))
@@ -313,12 +331,14 @@ func (c *liveOddsCache) Merge(events []odds.Event) {
 		c.events = append(c.events, event)
 	}
 	c.lastSuccess, c.message = time.Now(), ""
+	c.observation = observation
 }
 
-func (c *liveOddsCache) RecordError(err error) {
+func (c *liveOddsCache) RecordError(err error, observation odds.ProviderObservation) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.lastError, c.errorCount, c.message = time.Now(), c.errorCount+1, err.Error()
+	c.observation = observation
 }
 
 func (c *liveOddsCache) Events() []odds.Event {
@@ -331,22 +351,48 @@ func (c *liveOddsCache) Health() any {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return map[string]any{
-		"provider": c.provider, "healthy": !c.lastSuccess.IsZero() && time.Since(c.lastSuccess) < 2*time.Minute,
+		"provider": c.provider, "configured": c.configured,
+		"healthy":       c.configured && !c.lastSuccess.IsZero() && time.Since(c.lastSuccess) < 2*time.Minute,
 		"lastSuccessAt": c.lastSuccess, "lastErrorAt": c.lastError,
 		"errorCount": c.errorCount, "message": c.message, "cachedEvents": len(c.events),
+		"latestObservation": c.observation,
 	}
 }
 
-func runOddsLoop(ctx context.Context, provider odds.Provider, interval time.Duration, cache *liveOddsCache) {
+type oddsAuditStore interface {
+	SaveProviderObservation(odds.ProviderObservation) error
+	SaveProviderComparison(odds.ProviderComparison) error
+}
+
+func runOddsLoop(
+	ctx context.Context,
+	provider odds.Provider,
+	interval time.Duration,
+	cache *liveOddsCache,
+	store oddsAuditStore,
+	afterSuccess func(),
+) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
 		events, err := provider.FetchLive(ctx)
+		now := time.Now()
 		if err != nil {
 			log.Printf("Live odds poll failed: %v", err)
-			cache.RecordError(err)
+			observation := odds.ProviderObservation{Provider: provider.Name(), ObservedAt: now, Error: err.Error()}
+			cache.RecordError(err, observation)
+			if store != nil {
+				_ = store.SaveProviderObservation(observation)
+			}
 		} else {
-			cache.Merge(events)
+			clean, observation := odds.ValidateSnapshot(provider.Name(), events, now, 2*time.Minute)
+			cache.Merge(clean, observation)
+			if store != nil {
+				_ = store.SaveProviderObservation(observation)
+			}
+			if afterSuccess != nil {
+				afterSuccess()
+			}
 		}
 		select {
 		case <-ctx.Done():
@@ -354,6 +400,42 @@ func runOddsLoop(ctx context.Context, provider odds.Provider, interval time.Dura
 		case <-ticker.C:
 		}
 	}
+}
+
+type providerMonitor struct {
+	mu         sync.RWMutex
+	primary    *liveOddsCache
+	shadow     *liveOddsCache
+	comparison odds.ProviderComparison
+}
+
+func (m *providerMonitor) CompareAndPersist(store oddsAuditStore) {
+	if m == nil || m.primary == nil || m.shadow == nil {
+		return
+	}
+	comparison := odds.CompareSnapshots(
+		m.primary.provider, m.primary.Events(), m.shadow.provider, m.shadow.Events(), time.Now(),
+	)
+	m.mu.Lock()
+	m.comparison = comparison
+	m.mu.Unlock()
+	if store != nil {
+		_ = store.SaveProviderComparison(comparison)
+	}
+}
+
+func (m *providerMonitor) Health() any {
+	if m == nil || m.primary == nil {
+		return map[string]any{"provider": "not configured", "healthy": false}
+	}
+	primary, _ := m.primary.Health().(map[string]any)
+	m.mu.RLock()
+	comparison := m.comparison
+	m.mu.RUnlock()
+	primary["primary"] = m.primary.Health()
+	primary["shadow"] = m.shadow.Health()
+	primary["latestComparison"] = comparison
+	return primary
 }
 
 // isPredictable reports whether a match is in a state where a live goal
