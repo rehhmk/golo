@@ -60,11 +60,21 @@ func TestInvitationIsOneTimeAndSetsAccessExpiry(t *testing.T) {
 		ID: "u1", TelegramChatID: 123, DisplayName: "Tester", Active: true,
 		AdultConfirmed: true, TermsVersion: "v1", CreatedAt: time.Now(),
 	}
-	if err := store.RedeemInvitation(inv.Code, sub); err != nil {
+	redeemed, err := store.RedeemInvitation(inv.Code, sub)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.RedeemInvitation(inv.Code, sub); err == nil {
-		t.Fatal("invitation was redeemed twice")
+	if !redeemed {
+		t.Fatal("first redemption was reported as a retry")
+	}
+	redeemed, err = store.RedeemInvitation(inv.Code, sub)
+	if err != nil || redeemed {
+		t.Fatalf("same-chat retry should be an idempotent no-op: redeemed=%v err=%v", redeemed, err)
+	}
+	other := sub
+	other.ID, other.TelegramChatID = "u2", 456
+	if _, err := store.RedeemInvitation(inv.Code, other); err == nil {
+		t.Fatal("invitation was reused by a different chat")
 	}
 	active, err := store.ListActiveSubscribers()
 	if err != nil || len(active) != 1 {

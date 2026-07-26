@@ -163,6 +163,7 @@ func (s *SQLiteStore) migrate() error {
 		expires_at TIMESTAMP NOT NULL,
 		access_until TIMESTAMP NOT NULL,
 		used_at TIMESTAMP,
+		used_by_chat_id INTEGER,
 		created_at TIMESTAMP NOT NULL
 	);
 
@@ -202,6 +203,7 @@ func (s *SQLiteStore) migrate() error {
 		`ALTER TABLE predictions ADD COLUMN expected_goals_remaining REAL NOT NULL DEFAULT 0;`,
 		`ALTER TABLE predictions ADD COLUMN prob_two_plus REAL NOT NULL DEFAULT 0;`,
 		`ALTER TABLE predictions ADD COLUMN contributions_json TEXT NOT NULL DEFAULT '[]';`,
+		`ALTER TABLE invitations ADD COLUMN used_by_chat_id INTEGER;`,
 	} {
 		if _, err := s.db.Exec(statement); err != nil && !isDuplicateColumnErr(err) {
 			return err
