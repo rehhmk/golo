@@ -63,7 +63,7 @@ func main() {
 	// 6. Start HTTP API Server
 	addr := fmt.Sprintf(":%s", cfg.Port)
 
-	server := api.NewServer(store, pub, nil)
+	server := api.NewServer(store, pub, nil, predEngine.ModelVersion())
 
 	go func() {
 		log.Printf("Golo HTTP API Server running at http://localhost%s", addr)

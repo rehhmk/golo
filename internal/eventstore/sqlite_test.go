@@ -82,3 +82,47 @@ func TestSQLiteStore_Integration(t *testing.T) {
 		t.Errorf("prediction mismatch: %+v", preds)
 	}
 }
+
+// Accuracy reported across mixed model versions describes no model that
+// exists. The store keeps every generation ever run, so a since-replaced
+// model would otherwise keep dragging the published figures around.
+func TestGetPredictionsForModelScopesByVersion(t *testing.T) {
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "scope.db"))
+	if err != nil {
+		t.Fatalf("NewSQLiteStore: %v", err)
+	}
+	defer store.Close()
+
+	versions := []string{"baseline_v1.0.0", "baseline_v1.0.0", "hazard_v1.1.0"}
+	for i, version := range versions {
+		if err := store.SavePrediction(domain.Prediction{
+			MatchID:         "m1",
+			AsOfMatchSecond: i * 60,
+			ModelVersion:    version,
+			ConfidenceBand:  domain.ConfidenceHigh,
+			Status:          domain.PredictionStatusOK,
+			CalculatedAt:    time.Now(),
+		}); err != nil {
+			t.Fatalf("SavePrediction: %v", err)
+		}
+	}
+
+	current, err := store.GetPredictionsForModel("hazard_v1.1.0")
+	if err != nil {
+		t.Fatalf("GetPredictionsForModel: %v", err)
+	}
+	if len(current) != 1 {
+		t.Fatalf("got %d predictions for the current model, want 1", len(current))
+	}
+	if current[0].ModelVersion != "hazard_v1.1.0" {
+		t.Fatalf("got version %s", current[0].ModelVersion)
+	}
+
+	all, err := store.GetAllPredictions()
+	if err != nil {
+		t.Fatalf("GetAllPredictions: %v", err)
+	}
+	if len(all) != 3 {
+		t.Fatalf("got %d predictions unscoped, want all 3", len(all))
+	}
+}

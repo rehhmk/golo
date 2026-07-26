@@ -220,3 +220,10 @@ func (p *Predictor) evaluateHorizon(horizonKey string, feats map[string]float64)
 func roundProb(p float64) float64 {
 	return math.Round(p*1000) / 1000
 }
+
+// ModelVersion identifies the loaded artifact. Accuracy metrics are scoped to
+// it so a published figure describes the model actually running, rather than
+// an average over every generation whose predictions are still in the store.
+func (p *Predictor) ModelVersion() string {
+	return p.artifact.ModelVersion
+}
