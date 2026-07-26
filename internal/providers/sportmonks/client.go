@@ -10,6 +10,7 @@ package sportmonks
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -18,6 +19,11 @@ import (
 )
 
 const defaultTimeout = 8 * time.Second
+
+// errRateLimited marks an HTTP 429 from SportMonks. The quota is hourly, so
+// continuing to poll through it only burns requests that could not have
+// succeeded — the provider backs off on this error instead of retrying.
+var errRateLimited = errors.New("sportmonks: rate limit reached")
 
 type client struct {
 	apiKey     string
@@ -62,6 +68,10 @@ func (c *client) get(ctx context.Context, path string, query url.Values) (json.R
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("sportmonks: reading response body: %w", err)
+	}
+
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return nil, errRateLimited
 	}
 
 	if resp.StatusCode != http.StatusOK {

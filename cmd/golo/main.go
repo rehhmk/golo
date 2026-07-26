@@ -119,6 +119,13 @@ func runIngestionLoop(
 					log.Printf("Failed to save match: %v", err)
 				}
 
+				// A live-match feed may also return fixtures that haven't
+				// kicked off yet or have just ended. Predicting on those
+				// publishes a probability for a match that isn't running.
+				if !isPredictable(m.Status) {
+					continue
+				}
+
 				state, exists := matchStates[m.ID]
 				if !exists {
 					state = domain.InitialState(m)
@@ -126,20 +133,38 @@ func runIngestionLoop(
 
 				// Fetch only events newer than the last one we've already reduced.
 				events, err := prov.FetchEventsSince(ctx, m.ID, lastEventIDs[m.ID])
-				if err != nil || len(events) == 0 {
+				if err != nil {
+					log.Printf("Failed to fetch events for %s: %v", m.ID, err)
+				} else if len(events) > 0 {
+					lastEventIDs[m.ID] = highestProviderEventID(lastEventIDs[m.ID], events)
+
+					// 1. Save canonical events
+					if err := store.SaveEvents(events); err != nil {
+						log.Printf("Failed to save events: %v", err)
+					}
+
+					// 2. Reduce state deterministically
+					for _, ev := range events {
+						state = red.Reduce(state, ev)
+					}
+				}
+
+				// 2.5. Fold in the provider's authoritative view — clock,
+				// status, score, cumulative statistics. This runs on every
+				// tick, including ticks with no new events, because the match
+				// clock advances whether or not anything happened: without it
+				// every horizon would stay frozen at the last goal or card.
+				// It runs after the events so that where a provider publishes
+				// an authoritative value, that value wins over the reduction.
+				if snap, ok := prov.Snapshot(m.ID); ok {
+					state = red.ApplySnapshot(state, snap)
+				} else if len(events) == 0 {
+					// Event-only provider with nothing new: state is unchanged,
+					// so re-running the model would just republish the same
+					// numbers.
 					continue
 				}
-				lastEventIDs[m.ID] = highestProviderEventID(lastEventIDs[m.ID], events)
 
-				// 1. Save canonical events
-				if err := store.SaveEvents(events); err != nil {
-					log.Printf("Failed to save events: %v", err)
-				}
-
-				// 2. Reduce state deterministically
-				for _, ev := range events {
-					state = red.Reduce(state, ev)
-				}
 				matchStates[m.ID] = state
 
 				// 3. Save match state
@@ -189,6 +214,20 @@ func runIngestionLoop(
 				}
 			}
 		}
+	}
+}
+
+// isPredictable reports whether a match is in a state where a live goal
+// probability is meaningful. A fixture that hasn't kicked off has no elapsed
+// time to reason about, and one that's finished, abandoned or unreadable has
+// no remaining time — publishing a number for either would be noise.
+// Half time counts: the match is paused, but the second half is still to come.
+func isPredictable(status domain.MatchStatus) bool {
+	switch status {
+	case domain.MatchStatusLive, domain.MatchStatusHalfTime, domain.MatchStatusPaused:
+		return true
+	default:
+		return false
 	}
 }
 

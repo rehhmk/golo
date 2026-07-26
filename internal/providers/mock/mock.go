@@ -190,6 +190,33 @@ func (m *MockProvider) FetchEventsSince(ctx context.Context, matchID string, las
 	return []domain.MatchEvent{ev}, nil
 }
 
+// Snapshot reports the simulated clock and a LIVE status. The mock emits real
+// shot and corner events of its own, so it publishes no statistics — leaving
+// HasStats false keeps the rolling windows driven purely by those events.
+func (m *MockProvider) Snapshot(matchID string) (domain.LiveSnapshot, bool) {
+	m.mu.Lock()
+	clock, ok := m.matchClocks[matchID]
+	m.mu.Unlock()
+	if !ok {
+		return domain.LiveSnapshot{}, false
+	}
+
+	period := 1
+	if clock >= 2700 {
+		period = 2
+	}
+
+	now := time.Now()
+	return domain.LiveSnapshot{
+		MatchID:      matchID,
+		Status:       domain.MatchStatusLive,
+		Period:       period,
+		ClockSeconds: clock,
+		ProviderTime: now,
+		ReceivedAt:   now,
+	}, true
+}
+
 func (m *MockProvider) Health(ctx context.Context) domain.ProviderHealth {
 	return domain.ProviderHealth{
 		Provider:  m.Name(),

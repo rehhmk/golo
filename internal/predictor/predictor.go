@@ -85,9 +85,21 @@ func (p *Predictor) Predict(state domain.MatchState, feats map[string]float64, q
 	p10m := p.evaluateHorizon("10m", feats)
 	pFT := p.evaluateHorizon("full_time", feats)
 
-	// Ensure monotonicity: p5m <= p10m <= pFT
-	p10m = math.Max(p5m, p10m)
-	pFT = math.Max(p10m, pFT)
+	// Enforce monotonicity: p5m <= p10m <= pFT.
+	//
+	// "A goal before full time" contains "a goal in the next 10 minutes",
+	// which contains "a goal in the next 5 minutes", so the inequality is a
+	// logical necessity rather than a modelling preference. It is enforced by
+	// capping the shorter horizons against the longer one, never by raising
+	// the longer one to meet them: only the full-time model is time-aware
+	// (it carries a match_second term), so near the final whistle it is the
+	// only horizon that knows there are three minutes left rather than ten.
+	// Raising pFT to meet an unconstrained p10m did the opposite — at the
+	// 87th minute of a real match it inflated the published full-time
+	// probability from 1.6% to 34.8%, and that figure is the North-Star
+	// horizon every calibration metric is scored against.
+	p10m = math.Min(p10m, pFT)
+	p5m = math.Min(p5m, p10m)
 
 	// Confidence band derived from qualityScore
 	confBand := domain.ConfidenceHigh

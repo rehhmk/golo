@@ -35,6 +35,32 @@ const (
 	typeIDYellowRedCard = 21
 )
 
+// SportMonks fixture state_id values, from the /states endpoint (verified
+// live 2026-07-25). The /livescores/inplay endpoint does NOT only return
+// matches in progress — it also returns fixtures kicking off shortly
+// (state 1, "Not Started"), so state_id must be interpreted rather than
+// assumed, or pre-match fixtures get published as live at minute zero.
+const (
+	stateNotStarted     = 1
+	stateInplay1stHalf  = 2
+	stateHalfTime       = 3
+	stateBreak          = 4
+	stateFullTime       = 5
+	stateInplayET       = 6
+	stateAfterET        = 7
+	stateAfterPens      = 8
+	stateInplayPens     = 9
+	statePostponed      = 10
+	stateSuspended      = 11
+	stateCancelled      = 12
+	stateAbandoned      = 15
+	stateInterrupted    = 18
+	stateInplay2ndHalf  = 22
+	stateInplayET2nd    = 23
+	statePenaltiesBreak = 25
+	stateExtraTimeBreak = 21
+)
+
 type fixtureDTO struct {
 	ID           int64            `json:"id"`
 	LeagueID     int64            `json:"league_id"`
@@ -44,6 +70,48 @@ type fixtureDTO struct {
 	StartingAt   string           `json:"starting_at"`
 	Participants []participantDTO `json:"participants"`
 	Events       []eventDTO       `json:"events"`
+	Periods      []periodDTO      `json:"periods"`
+	Scores       []scoreDTO       `json:"scores"`
+	Statistics   []statisticDTO   `json:"statistics"`
+}
+
+// periodDTO carries the live match clock. The period with ticking=true is the
+// one currently running; its minutes/seconds are elapsed time within the
+// match (already inclusive of counts_from, i.e. a 2nd half period reports
+// minute 77, not minute 32).
+type periodDTO struct {
+	ID          int64 `json:"id"`
+	TypeID      int   `json:"type_id"`
+	CountsFrom  int   `json:"counts_from"`
+	SortOrder   int   `json:"sort_order"`
+	Ticking     bool  `json:"ticking"`
+	HasTimer    bool  `json:"has_timer"`
+	Minutes     *int  `json:"minutes"`
+	Seconds     *int  `json:"seconds"`
+	TimeAdded   *int  `json:"time_added"`
+	Started     *int64 `json:"started"`
+	Ended       *int64 `json:"ended"`
+	Description string `json:"description"`
+}
+
+type scoreDTO struct {
+	ParticipantID int64  `json:"participant_id"`
+	Description   string `json:"description"`
+	Score         struct {
+		Goals       int    `json:"goals"`
+		Participant string `json:"participant"`
+	} `json:"score"`
+}
+
+type statisticDTO struct {
+	ParticipantID int64 `json:"participant_id"`
+	TypeID        int   `json:"type_id"`
+	Type          struct {
+		DeveloperName string `json:"developer_name"`
+	} `json:"type"`
+	Data struct {
+		Value float64 `json:"value"`
+	} `json:"data"`
 }
 
 type participantDTO struct {
@@ -77,14 +145,37 @@ type Provider struct {
 	// in whatever order the API returned them.
 	priorityRank map[string]int
 
-	mu       sync.Mutex
-	fixtures map[string]int64 // internal matchID -> SportMonks fixture ID
+	// mu guards the cached fixture payloads and health counters.
+	//
+	// cache holds the full fixture as returned by the most recent
+	// ListLiveMatches poll, keyed by internal match ID. A single
+	// /livescores/inplay call carries participants, periods, scores,
+	// statistics and events for every live match at once, so both
+	// FetchEventsSince and Snapshot are served from here without further
+	// I/O. That matters: the previous one-request-per-match approach cost
+	// 1+N calls per tick, which at a 3s poll with 8 live matches is ~10,800
+	// requests/hour against an API budget of roughly 3,000.
+	mu    sync.Mutex
+	cache map[string]fixtureDTO
+
+	// cooldownUntil suppresses outbound requests after a 429. SportMonks
+	// quotas reset on an hourly window, so polling through a rate limit
+	// cannot succeed and only burns the quota the moment it refills.
+	cooldownUntil time.Time
+	cooldown      time.Duration
 
 	lastSuccessAt time.Time
 	lastErrorAt   time.Time
 	errorCount    int
 	lastErrMsg    string
 }
+
+// Backoff bounds for rate-limit cooldowns: long enough that a quota has a
+// chance to refill, short enough that recovery isn't delayed by many minutes.
+const (
+	minRateLimitCooldown = 60 * time.Second
+	maxRateLimitCooldown = 10 * time.Minute
+)
 
 // New creates a SportMonks provider. apiKey must never be exposed to the frontend;
 // it is only ever read from server-side config (internal/config).
@@ -101,7 +192,7 @@ func New(apiKey, baseURL string, priorityCompetitions []string) *Provider {
 	return &Provider{
 		client:       newClient(apiKey, baseURL),
 		priorityRank: rank,
-		fixtures:     make(map[string]int64),
+		cache:        make(map[string]fixtureDTO),
 	}
 }
 
@@ -109,12 +200,24 @@ func (p *Provider) Name() string {
 	return "sportmonks"
 }
 
+// inplayIncludes pulls everything Golo needs for one poll tick in a single
+// request: team identities, the live clock, the authoritative score, the
+// cumulative statistics that feed the rolling windows, and the event list.
+const inplayIncludes = "participants;periods;scores;statistics.type;events"
+
 func (p *Provider) ListLiveMatches(ctx context.Context) ([]domain.Match, error) {
+	if wait, ok := p.inCooldown(); ok {
+		return nil, fmt.Errorf("sportmonks: rate limited, retrying in %s", wait.Round(time.Second))
+	}
+
 	query := url.Values{}
-	query.Set("include", "participants")
+	query.Set("include", inplayIncludes)
 
 	data, err := p.client.get(ctx, "/livescores/inplay", query)
 	if err != nil {
+		if errors.Is(err, errRateLimited) {
+			p.enterCooldown()
+		}
 		p.recordError(err)
 		return nil, err
 	}
@@ -129,9 +232,13 @@ func (p *Provider) ListLiveMatches(ctx context.Context) ([]domain.Match, error) 
 	matches := make([]domain.Match, 0, len(fixtures))
 
 	p.mu.Lock()
+	// Replace rather than merge: a fixture that dropped out of the inplay
+	// response has finished, so its stale payload must not keep being served
+	// to Snapshot as though it were current.
+	p.cache = make(map[string]fixtureDTO, len(fixtures))
 	for _, f := range fixtures {
 		matchID := internalMatchID(f.ID)
-		p.fixtures[matchID] = f.ID
+		p.cache[matchID] = f
 
 		home, away := participantIDs(f.Participants)
 		scheduledAt, _ := time.Parse(startingAtLayout, f.StartingAt)
@@ -145,11 +252,9 @@ func (p *Provider) ListLiveMatches(ctx context.Context) ([]domain.Match, error) 
 			HomeTeamID:      home,
 			AwayTeamID:      away,
 			ScheduledAt:     scheduledAt,
-			// The inplay endpoint only ever returns matches currently in
-			// progress, so every fixture it returns is LIVE by construction.
-			Status:    domain.MatchStatusLive,
-			CreatedAt: now,
-			UpdatedAt: now,
+			Status:          mapStatus(f.StateID),
+			CreatedAt:       now,
+			UpdatedAt:       now,
 		})
 	}
 	p.mu.Unlock()
@@ -158,6 +263,166 @@ func (p *Provider) ListLiveMatches(ctx context.Context) ([]domain.Match, error) 
 
 	p.recordSuccess()
 	return matches, nil
+}
+
+// Snapshot serves the cached view captured by the last ListLiveMatches call.
+func (p *Provider) Snapshot(matchID string) (domain.LiveSnapshot, bool) {
+	p.mu.Lock()
+	f, ok := p.cache[matchID]
+	p.mu.Unlock()
+	if !ok {
+		return domain.LiveSnapshot{}, false
+	}
+
+	home, away := participantIDs(f.Participants)
+	homeStats, awayStats, hasStats := statTotals(f.Statistics, home, away)
+
+	now := time.Now()
+	return domain.LiveSnapshot{
+		MatchID:      matchID,
+		Status:       mapStatus(f.StateID),
+		Period:       periodNumber(f.StateID),
+		ClockSeconds: clockSeconds(f.Periods, f.StateID),
+		HasScore:     true,
+		Score:        currentScore(f.Scores, home, away),
+		HasStats:     hasStats,
+		Home:         homeStats,
+		Away:         awayStats,
+		ProviderTime: now,
+		ReceivedAt:   now,
+	}, true
+}
+
+// mapStatus translates a SportMonks state_id into Golo's match lifecycle.
+// Unknown states map to STALE rather than LIVE so an unrecognized code can
+// never cause a non-running match to be published as though it were live.
+func mapStatus(stateID int) domain.MatchStatus {
+	switch stateID {
+	case stateInplay1stHalf, stateInplay2ndHalf, stateInplayET, stateInplayET2nd, stateInplayPens:
+		return domain.MatchStatusLive
+	case stateHalfTime:
+		return domain.MatchStatusHalfTime
+	case stateBreak, stateExtraTimeBreak, statePenaltiesBreak:
+		return domain.MatchStatusPaused
+	case stateNotStarted:
+		return domain.MatchStatusScheduled
+	case stateFullTime, stateAfterET, stateAfterPens:
+		return domain.MatchStatusFinished
+	case statePostponed, stateCancelled, stateAbandoned:
+		return domain.MatchStatusCancelled
+	case stateSuspended, stateInterrupted:
+		return domain.MatchStatusPaused
+	default:
+		return domain.MatchStatusStale
+	}
+}
+
+// periodNumber reports which half the match is in, matching the reducer's
+// 1-based period convention. Extra time and penalties continue the count.
+func periodNumber(stateID int) int {
+	switch stateID {
+	case stateInplay1stHalf:
+		return 1
+	case stateHalfTime, stateInplay2ndHalf:
+		return 2
+	case stateInplayET, stateExtraTimeBreak, stateInplayET2nd:
+		return 3
+	case stateInplayPens, statePenaltiesBreak:
+		return 4
+	default:
+		return 0
+	}
+}
+
+// clockSeconds extracts elapsed match time from the period list.
+//
+// SportMonks reports minutes/seconds on the ticking period already inclusive
+// of counts_from, so a 2nd half at 77:52 reports minutes=77 — not 32. When no
+// period is ticking (half time, or a feed without a timer) the clock is taken
+// from the furthest-progressed period instead, so state still reflects where
+// the match actually is rather than falling back to zero.
+func clockSeconds(periods []periodDTO, stateID int) int {
+	best := 0
+	for _, period := range periods {
+		secs := 0
+		if period.Minutes != nil {
+			secs = *period.Minutes * 60
+		}
+		if period.Seconds != nil {
+			secs += *period.Seconds
+		}
+		if period.Ticking && period.Minutes != nil {
+			return secs
+		}
+		if secs > best {
+			best = secs
+		}
+	}
+
+	// Half time has no ticking period; the match is at least 45 minutes in.
+	if best == 0 && stateID == stateHalfTime {
+		return 45 * 60
+	}
+	return best
+}
+
+// currentScore reads the CURRENT score entries, which SportMonks maintains
+// authoritatively. Preferring these over the event-derived tally keeps the
+// score correct for goal variants the event type mapping doesn't recognize
+// (own goals in particular have no confirmed type_id).
+func currentScore(scores []scoreDTO, homeID, awayID string) domain.ScoreState {
+	var out domain.ScoreState
+	for _, s := range scores {
+		if s.Description != "CURRENT" {
+			continue
+		}
+		switch strconv.FormatInt(s.ParticipantID, 10) {
+		case homeID:
+			out.Home = s.Score.Goals
+		case awayID:
+			out.Away = s.Score.Goals
+		}
+	}
+	return out
+}
+
+// statTotals collects the cumulative statistics the feature engine consumes.
+// Statistic types are matched by developer_name, which is stable across the
+// API, rather than by numeric type_id.
+func statTotals(stats []statisticDTO, homeID, awayID string) (home, away domain.TeamStatTotals, hasStats bool) {
+	for _, s := range stats {
+		var target *domain.TeamStatTotals
+		switch strconv.FormatInt(s.ParticipantID, 10) {
+		case homeID:
+			target = &home
+		case awayID:
+			target = &away
+		default:
+			continue
+		}
+
+		value := int(s.Data.Value)
+		switch s.Type.DeveloperName {
+		case "SHOTS_ON_TARGET":
+			target.ShotsOnTarget = value
+		case "SHOTS_OFF_TARGET":
+			target.ShotsOffTarget = value
+		case "SHOTS_BLOCKED":
+			target.ShotsBlocked = value
+		case "CORNERS":
+			target.Corners = value
+		case "FOULS":
+			target.Fouls = value
+		case "DANGEROUS_ATTACKS":
+			target.DangerousAttacks = value
+		case "BALL_POSSESSION":
+			target.Possession = s.Data.Value
+		default:
+			continue
+		}
+		hasStats = true
+	}
+	return home, away, hasStats
 }
 
 // sortByPriority stable-sorts matches so configured priority competitions
@@ -177,37 +442,23 @@ func (p *Provider) sortByPriority(matches []domain.Match) {
 	})
 }
 
-// FetchEventsSince fetches the full event list for a fixture and returns only
-// events with a SportMonks event ID greater than lastEventID. SportMonks has
-// no native "since" cursor for events, so this fetches the whole fixture each
-// time; the eventstore's SaveEvents already dedupes by event_id (INSERT OR
-// IGNORE), so returning already-seen events again is harmless — the id filter
-// here is purely an optimization to reduce the outbound payload size.
+// FetchEventsSince returns the events for a fixture that are newer than
+// lastEventID, read from the payload the last ListLiveMatches poll already
+// fetched. SportMonks has no native "since" cursor for events, so the feed
+// carries the full cumulative list every time and the id filter narrows it
+// to what the reducer hasn't folded in yet.
+//
+// This performs no request of its own. The event list arrives with the
+// inplay poll, so fetching it again per match would triple-to-tenfold the
+// request count for data already in hand.
 func (p *Provider) FetchEventsSince(ctx context.Context, matchID string, lastEventID string) ([]domain.MatchEvent, error) {
 	p.mu.Lock()
-	fixtureID, ok := p.fixtures[matchID]
+	fixture, ok := p.cache[matchID]
 	p.mu.Unlock()
 	if !ok {
-		var err error
-		fixtureID, err = fixtureIDFromMatchID(matchID)
-		if err != nil {
-			return nil, fmt.Errorf("sportmonks: unknown match %s: %w", matchID, err)
-		}
-	}
-
-	query := url.Values{}
-	query.Set("include", "events;participants")
-
-	data, err := p.client.get(ctx, fmt.Sprintf("/fixtures/%d", fixtureID), query)
-	if err != nil {
-		p.recordError(err)
-		return nil, err
-	}
-
-	var fixture fixtureDTO
-	if err := unmarshalObject(data, &fixture); err != nil {
-		p.recordError(err)
-		return nil, fmt.Errorf("sportmonks: decoding fixture: %w", err)
+		// Not in the last poll: the match is over or was never live. No
+		// events rather than an error — the ingestion loop drops it anyway.
+		return nil, nil
 	}
 
 	minEventID, _ := strconv.ParseInt(lastEventID, 10, 64)
@@ -221,7 +472,6 @@ func (p *Provider) FetchEventsSince(ctx context.Context, matchID string, lastEve
 		events = append(events, mapEvent(ev, matchID, now))
 	}
 
-	p.recordSuccess()
 	return events, nil
 }
 
@@ -239,10 +489,43 @@ func (p *Provider) Health(ctx context.Context) domain.ProviderHealth {
 	}
 }
 
+// inCooldown reports whether requests are currently suppressed, and for how
+// much longer.
+func (p *Provider) inCooldown() (time.Duration, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if remaining := time.Until(p.cooldownUntil); remaining > 0 {
+		return remaining, true
+	}
+	return 0, false
+}
+
+// enterCooldown starts (or doubles) the rate-limit backoff.
+func (p *Provider) enterCooldown() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.cooldown == 0 {
+		p.cooldown = minRateLimitCooldown
+	} else if p.cooldown < maxRateLimitCooldown {
+		p.cooldown *= 2
+		if p.cooldown > maxRateLimitCooldown {
+			p.cooldown = maxRateLimitCooldown
+		}
+	}
+	p.cooldownUntil = time.Now().Add(p.cooldown)
+}
+
 func (p *Provider) recordSuccess() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.lastSuccessAt = time.Now()
+	// A successful call means the quota has refilled; drop back to the
+	// shortest backoff so a later, unrelated limit isn't punished by the
+	// previous incident's escalation.
+	p.cooldown = 0
+	p.cooldownUntil = time.Time{}
 }
 
 func (p *Provider) recordError(err error) {

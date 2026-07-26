@@ -115,6 +115,50 @@ type MatchState struct {
 	SeasonID      string `json:"seasonId,omitempty"`
 }
 
+// TeamStatTotals holds cumulative match statistics for one team, as reported
+// by a provider that publishes running totals rather than discrete events.
+type TeamStatTotals struct {
+	ShotsOnTarget    int     `json:"shotsOnTarget"`
+	ShotsOffTarget   int     `json:"shotsOffTarget"`
+	ShotsBlocked     int     `json:"shotsBlocked"`
+	Corners          int     `json:"corners"`
+	Fouls            int     `json:"fouls"`
+	DangerousAttacks int     `json:"dangerousAttacks"`
+	Possession       float64 `json:"possession"`
+}
+
+// LiveSnapshot is a provider's authoritative point-in-time view of a match:
+// the data a feed publishes as a current value or a running total rather than
+// as a discrete event — the match clock above all, plus status, score and
+// aggregate statistics.
+//
+// It exists because an event feed alone cannot drive a live probability. A
+// match can go ten minutes without emitting a single event, yet every horizon
+// Golo predicts ("goal in the next 5 minutes", "goal before full time")
+// depends on the clock having moved. Reducing only events leaves ClockSeconds
+// frozen at the last goal or card, so the published probability silently goes
+// stale. Snapshots let the reducer advance state on every poll tick.
+//
+// The HasScore and HasStats flags distinguish "this provider does not report
+// this data" from "the reported value is genuinely zero". Without them a feed
+// that omits the score would silently reset a 2-0 match to 0-0 on every poll.
+type LiveSnapshot struct {
+	MatchID      string      `json:"matchId"`
+	Status       MatchStatus `json:"status"`
+	Period       int         `json:"period"`
+	ClockSeconds int         `json:"clockSeconds"`
+
+	HasScore bool       `json:"hasScore"`
+	Score    ScoreState `json:"score"`
+
+	HasStats bool           `json:"hasStats"`
+	Home     TeamStatTotals `json:"home"`
+	Away     TeamStatTotals `json:"away"`
+
+	ProviderTime time.Time `json:"providerTime"`
+	ReceivedAt   time.Time `json:"receivedAt"`
+}
+
 // PredictionStatus indicates the operational confidence of a prediction.
 type PredictionStatus string
 
