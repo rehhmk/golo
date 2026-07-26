@@ -5,34 +5,82 @@
 | Campo | Valor |
 |---|---|
 | Documento | Product + Technical Blueprint |
-| Versão | 1.0 |
-| Status | Aprovado para implementação do MVP |
-| Data de referência | 25 de julho de 2026 |
+| Versão | 2.0 |
+| Status | Reposicionado após medição — ver §0 |
+| Data de referência | 26 de julho de 2026 |
 | Responsável | Enzo Trichês |
-| Objetivo central | Estimar continuamente a probabilidade de ocorrer ao menos um gol no restante de uma partida de futebol ao vivo |
-| Mercado inicial | Ferramenta privada de pesquisa e análise probabilística |
-| Princípio | Probabilidade calibrada, auditável e reproduzível; nunca promessa de lucro |
+| Objetivo central | Medir, com rigor estatístico, se um cenário de jogo se repete com frequência suficiente para valer um preço — e dizer quando não vale |
+| Mercado inicial | Ferramenta de validação de cenários para quem analisa futebol ao vivo |
+| Princípio | A régua vale mais que o palpite; nunca promessa de lucro |
+
+---
+
+## 0. Por que este documento mudou
+
+A versão 1.0 assumia que estimar bem a probabilidade de gol produziria valor. **Isso foi medido e não se sustentou.** O produto foi reposicionado em torno do que a medição mostrou ser genuinamente forte.
+
+### O que foi medido
+
+Sobre 3.287 partidas reais (Brasileirão, Libertadores, MLS, Liga MX), com 80.261 chutes datados:
+
+| Horizonte | Brier do modelo | Brier da taxa constante | Vantagem (IC 95%, agrupado por partida) |
+|---|---|---|---|
+| 5 min | 0,11574 | 0,11574 | indistinguível de ruído |
+| 10 min | 0,18365 | 0,18361 | indistinguível de ruído |
+| até o fim | 0,15036 | 0,15042 | `-0,000066` → `[-0,001025, +0,000853]` |
+
+**O modelo empata com "chutar a taxa média do futebol".** Alimentá-lo com dados de chute reais melhorou o Brier de 0,15130 para 0,15036 — e essa melhora não sobrevive a um teste de significância.
+
+### As três conclusões que reposicionam o produto
+
+1. **Não há vantagem contra o mercado.** O sinal está quase todo na taxa base, que qualquer casa de apostas também conhece. Vender "no que apostar" seria vender ruído com decimais.
+2. **Dado melhor não resolve.** Comprar xG melhoraria a precisão absoluta, mas as casas têm o mesmo dado ou melhor. Vantagem vem de ter algo que o outro lado não tem, não de ter algo bom.
+3. **O que ficou excelente foi o aparato de medição.** Intervalos de confiança, agrupamento por partida, recusa em falar sem evidência, testes selados. Isso é raro — e é a única peça que não compete com Opta nem com bet365.
+
+### O reposicionamento
+
+De: *"prevemos gols melhor que os outros"* — afirmação que a medição não sustenta.
+
+Para: **"você tem uma teoria sobre futebol; nós dizemos se ela é verdade, em segundos, sobre milhares de partidas, sem você apostar um centavo."**
+
+O método correto que circula entre apostadores — definir um cenário, observar 50 a 100 vezes anotando tudo, calcular a taxa de acerto, derivar a odd mínima como `1/taxa` — está certo em estrutura e é inviável na prática. Leva meses e dinheiro real. E 50 observações não bastam: para provar uma vantagem de 5 pontos percentuais sobre uma odd 1,50 são necessárias **~940** observações.
+
+O Golo faz esse trabalho em segundos, com 30 vezes mais amostra e risco zero. Essa é a proposta de valor, e ela **não depende de o modelo vencer ninguém**.
 
 ---
 
 ## 1. Resumo executivo
 
-O Golo será uma aplicação web que acompanha partidas de futebol ao vivo e atualiza, em tempo quase real, probabilidades como:
+O Golo é uma ferramenta que responde a uma pergunta: **"essa minha teoria sobre futebol é verdade?"** — e responde sem que o usuário precise apostar para descobrir.
 
-- gol nos próximos 60 segundos;
-- gol nos próximos 5 minutos;
-- gol nos próximos 10 minutos;
-- gol até o fim da partida;
-- gol do mandante até o fim;
-- gol do visitante até o fim.
+O usuário monta uma regra na tela: *quando* o cenário ocorre e *o que* se espera dele.
 
-O MVP não será uma casa de apostas, não receberá dinheiro, não fará apostas automaticamente e não prometerá ganho financeiro. A primeira versão será uma ferramenta privada para:
+> Quando: passou dos 70 minutos **e** um time está ganhando por 2 ou mais
+> Espera-se: sai mais um gol até o fim
 
-1. testar a viabilidade estatística do problema;
-2. validar a qualidade e a latência de dados ao vivo;
-3. comparar probabilidades previstas com resultados reais;
-4. medir calibração, erro e estabilidade por liga, minuto e estado do placar;
-5. decidir, com evidência, se existe base para evoluir o produto.
+O Golo varre milhares de partidas históricas em segundos e devolve:
+
+```
+70min, vencendo por 2+
+  ocorreu em          1.356 partidas
+  saiu mais um gol    50,4%
+  intervalo 95%       47,8% - 53,1%
+  odd mínima          2,09   (no pior caso do intervalo)
+  pior sequência      8 perdas seguidas
+  banca sugerida      2,5% por entrada
+```
+
+A leitura é imediata: **esse cenário só dá lucro em odd acima de 2,09.** A uma odd de 1,50 ele é prejuízo no longo prazo — não por azar, por aritmética.
+
+Em segundo plano, e alimentando a mesma régua, o Golo mantém um estado probabilístico versionado por partida ao vivo, com probabilidade de gol em múltiplos horizontes. Essa camada continua existindo: ela é o que permite reconhecer um cenário no momento em que ele acontece. Ela deixou de ser o produto.
+
+O MVP não é casa de apostas, não recebe dinheiro, não executa apostas, não recomenda entradas e não promete ganho financeiro.
+
+### As três coisas que ninguém mais entrega
+
+1. **O intervalo de confiança.** Qualquer um mostra "acerto de 50%". Quase ninguém mostra que, com 50 observações, isso significa "entre 36% e 63%" — e que portanto a odd mínima real está entre 1,57 e 2,74. É a diferença entre achar que tem vantagem e ter.
+2. **A pior sequência real.** Observada, não estimada. É dela que sai o tamanho da entrada, e é o que quebra a banca de quem não olhou.
+3. **O veredito de "não vale".** Quando nenhum cenário supera o preço disponível, o Golo diz isso com todas as letras. Uma ferramenta que só sabe encontrar oportunidade não é ferramenta, é vitrine.
 
 A arquitetura de menor custo usa:
 
@@ -61,6 +109,10 @@ O custo GCP esperado do MVP, dentro dos níveis gratuitos, é dominado pelo IPv4
 | Modelo inicial | Hazard/Poisson dinâmico + regressão logística calibrada |
 | LLM na previsão | Não usar |
 | Aposta automática | Fora do MVP |
+| Produto vendido | A régua de medição, não a previsão (ADR-008) |
+| Autoria do cenário | Do usuário; o Golo mede e reconhece, não propõe (§13) |
+| Qualificação | Exige intervalo de confiança, nunca comparação pontual (ADR-009) |
+| Taxa de acerto sem intervalo | Proibida em qualquer superfície |
 | Kafka, Kubernetes, Cloud SQL | Fora do MVP |
 | Cobertura inicial | Uma ou poucas ligas com feed de qualidade conhecida |
 | Fonte ao vivo | Adapter substituível; API autorizada é preferível a scraping |
@@ -71,42 +123,46 @@ O custo GCP esperado do MVP, dentro dos níveis gratuitos, é dominado pelo IPv4
 
 ### 2.1 Problema
 
-Durante uma partida, a chance de um novo gol muda continuamente. Placar, minuto, cartões, substituições, ritmo ofensivo, chutes, finalizações no alvo, xG, pressão recente e comportamento do mercado podem alterar a intensidade esperada de gols.
+Quem analisa futebol acumula teorias: *"jogo empatado no fim tende a abrir"*, *"time vencendo por dois se recolhe"*, *"depois de uma expulsão sai gol"*. Algumas são verdadeiras, outras são folclore, e **nada na experiência normal de assistir futebol distingue as duas**.
 
-A maioria das interfaces apresenta estatísticas brutas ou um palpite sem explicar:
+O método correto para separá-las é conhecido e circula entre apostadores: defina um cenário específico, observe-o dezenas de vezes anotando tudo, calcule a taxa de acerto, derive a odd mínima como `1/taxa`. O método está estruturalmente certo. Ele é inviável por dois motivos:
 
-- qual é o horizonte temporal;
-- quando a previsão foi calculada;
-- qual é a qualidade do feed;
-- como a probabilidade foi calibrada;
-- em quais contextos o modelo funciona ou falha;
-- se o resultado é reproduzível em replay histórico.
+1. **É lento e caro.** Cinquenta observações exigem meses e dinheiro real em jogo.
+2. **Cinquenta não bastam, e ninguém diz isso.** Com 50 observações a 50% de acerto, a taxa real está entre 36,5% e 63,5%. A "odd mínima de 2,00" é na verdade um intervalo de 1,57 a 2,74. Apostar em 2,10 acreditando ter vantagem pode ser prejuízo garantido. Para provar uma vantagem de 5 pontos percentuais sobre uma odd 1,50 são necessárias ~940 observações.
 
-O Golo resolve isso mantendo um **estado probabilístico versionado por partida**.
+O erro que o mercado comete não é calcular errado a taxa de acerto. É **apresentá-la sem a incerteza** — e decidir dinheiro com base num número que não suporta a decisão.
 
-### 2.2 Proposta de valor do MVP
+### 2.2 Proposta de valor
 
-> Em uma única tela, mostrar a probabilidade atualizada de haver um gol, o horizonte da previsão, a qualidade do dado, a evolução da probabilidade e os fatores que mais contribuíram para a mudança.
+> Você tem uma teoria sobre futebol. O Golo diz se ela é verdade — em segundos, sobre milhares de partidas, com a incerteza na frente, e sem você arriscar nada para descobrir.
+
+E, criticamente: **diz também quando não é verdade.** O veredito negativo é um resultado do produto, não uma falha dele.
 
 ### 2.3 Usuário primário
 
-No MVP, o usuário primário é o próprio pesquisador/desenvolvedor:
+Quem já analisa futebol ao vivo e quer parar de decidir por intuição:
 
-- quer acompanhar partidas selecionadas;
-- quer observar a evolução do modelo;
-- precisa auditar cada previsão;
-- precisa comparar modelos e providers;
-- aceita uma interface funcional antes de uma interface comercial.
+- tem teorias sobre padrões de jogo e quer testá-las;
+- entende que taxa de acerto importa, mas não tem como medi-la sem apostar;
+- precisa saber a que preço um cenário deixa de compensar;
+- aceita — e prefere — ouvir que a teoria dele não se sustenta.
+
+Esse último ponto é uma escolha de posicionamento com consequência comercial, e está registrada aqui deliberadamente: **o mercado de dicas recompensa confiança, não calibração.** Quem compra palpite quer certeza. O Golo vende o oposto disso, e portanto não disputa esse público.
 
 ### 2.4 Usuários futuros possíveis
 
-- analistas quantitativos esportivos;
-- criadores de conteúdo estatístico;
-- plataformas esportivas que desejem um widget probabilístico;
-- pesquisadores de modelagem de eventos;
-- apostadores adultos que desejem informação, desde que o produto adote proteção e jogo responsável.
+- criadores de conteúdo estatístico que precisam de números defensáveis;
+- portais esportivos que queiram um widget de leitura de jogo ao vivo;
+- analistas quantitativos que queiram validar hipóteses rapidamente.
 
-Esses usuários não fazem parte do escopo de validação inicial.
+### 2.5 O que o Golo deliberadamente não disputa
+
+| Território | Por que não |
+|---|---|
+| Probabilidade ao vivo como produto | Commodity. Opta e Stats Perform vendem, com dado melhor e décadas de vantagem. |
+| Dicas de aposta | Sem vantagem medida (§0). Vender seria vender ruído. |
+| Venda de dados | O dataset é derivado da SportMonks; os termos proíbem redistribuição. |
+| Ser mais preciso que o mercado | Medido e refutado. A eficiência do mercado de gol ao vivo é alta. |
 
 ---
 
@@ -114,14 +170,26 @@ Esses usuários não fazem parte do escopo de validação inicial.
 
 ### 3.1 Objetivos do MVP
 
-1. Ingerir eventos de partidas ao vivo com timestamps confiáveis.
-2. Manter o estado atual de cada partida de forma determinística.
-3. Gerar snapshots de features sem vazamento de informação futura.
-4. Estimar probabilidades para múltiplos horizontes.
-5. Publicar a previsão no frontend com atraso conhecido.
-6. Armazenar entradas, features, versão do modelo e saída para auditoria.
-7. Reproduzir uma partida histórica usando o mesmo pipeline do modo ao vivo.
-8. Avaliar calibração e erro por segmentos relevantes.
+1. Permitir que o usuário defina um cenário de jogo sem escrever código.
+2. Medir a frequência histórica desse cenário sobre milhares de partidas, em segundos.
+3. **Devolver sempre o intervalo de confiança, nunca só o ponto.**
+4. Derivar a odd mínima necessária a partir do limite pessimista do intervalo.
+5. Reportar a pior sequência de perdas observada, e dimensionar a entrada a partir dela.
+6. Dizer com clareza quando a amostra é insuficiente ou quando o cenário não compensa.
+7. Reconhecer ao vivo quando um cenário monitorado pelo usuário está ocorrendo.
+8. Manter tudo auditável: entradas, features, versão do modelo, saída e partição de dados.
+
+### 3.1.1 Regras invioláveis da medição
+
+Estas não são preferências de implementação. São o produto.
+
+| Regra | Motivo |
+|---|---|
+| Uma observação por partida | Um cenário que vale por vinte minutos é **uma** oportunidade de entrada, não vinte. Contar por minuto inflou uma amostra de 255 partidas para 6.284 "observações" e produziu um intervalo de 2 pontos — precisão falsa. |
+| Intervalo agrupado por partida | Previsões dentro de uma mesma partida dividem um único desfecho. O n efetivo é o número de partidas. |
+| Veredito pelo limite inferior | Usar a estimativa pontual é como um cara-ou-coroa vira "vantagem". |
+| Sequência de perdas observada, não estimada | Dimensionar banca por um pior caso imaginado é adivinhação com aparência de método. |
+| Amostra insuficiente é dito, não escondido | Um número sem contexto de amostra convida a decisão errada. |
 
 ### 3.2 Não objetivos do MVP
 
@@ -137,39 +205,88 @@ Esses usuários não fazem parte do escopo de validação inicial.
 - garantir retorno financeiro;
 - contornar bloqueios, autenticação ou termos de uso de providers.
 
-### 3.3 North Star técnica
+### 3.3 North Star
 
-**Brier Score e calibração da probabilidade de gol até o fim**, medidos em snapshots fora da amostra.
+**A medição está correta e é reproduzível** — não "o modelo é bom".
 
-Acurácia binária não é a métrica principal. Um modelo que sempre responde "não" pode parecer preciso em horizontes curtos, mas não será necessariamente útil ou calibrado.
+A mudança é deliberada. A North Star anterior (Brier da probabilidade de gol) media a qualidade da previsão, que §0 mostrou empatar com a taxa base. A régua não precisa que o modelo vença ninguém para valer; precisa estar certa.
+
+Concretamente, a North Star é verificada por:
+
+- o número de ocorrências de um cenário bate com uma contagem independente em SQL sobre o mesmo dataset;
+- o intervalo estreita conforme a amostra cresce, na proporção esperada;
+- rodar duas vezes sobre o mesmo dataset produz o mesmo resultado, com o mesmo hash de partição.
+
+Brier e calibração continuam sendo medidos, e continuam importando — mas como **controle de qualidade da camada ao vivo**, não como promessa ao usuário.
 
 ### 3.4 Critérios de sucesso do MVP
 
-O MVP é tecnicamente validado quando:
+O MVP é validado quando:
 
+- o usuário monta um cenário pela interface, sem código, e recebe resposta em segundos;
+- toda taxa de acerto exibida vem acompanhada de intervalo e contagem de partidas;
+- a odd mínima é derivada do limite pessimista, e isso está explícito na tela;
+- um cenário sem amostra suficiente é rotulado como tal, e não recebe veredito;
+- um cenário que não compensa a nenhum preço razoável é reportado como tal;
 - o replay e o modo ao vivo produzem features equivalentes para o mesmo instante;
-- toda previsão possui `event_time`, `received_at`, `calculated_at`, versão de features e versão do modelo;
-- o modelo supera um baseline ingênuo fora da amostra em Brier Score e Log Loss;
-- a curva de calibração não apresenta desvio sistemático grave;
-- a latência do feed é visível e considerada na confiança;
-- falhas de provider não geram probabilidades silenciosamente incorretas;
-- os resultados podem ser segmentados por liga, minuto, placar e qualidade do feed.
+- falhas de provider não geram números silenciosamente incorretos.
 
-### 3.5 Gate para continuar o produto
+### 3.5 Gate para monetizar
 
-A evolução para produto comercial só deve ocorrer quando houver evidência de:
+A cobrança só deve ocorrer quando houver:
 
-1. dados ao vivo suficientemente rápidos e estáveis;
-2. ganho consistente sobre baselines simples;
-3. calibração aceitável em dados realmente futuros;
-4. processo legal e de jogo responsável definido;
-5. custo de provider compatível com a monetização possível.
+1. interface de cenário utilizável por quem não programa;
+2. medição verificada contra contagem independente;
+3. revisão jurídica específica (§23) — vender ferramenta a apostadores ainda alcança as regras de publicidade de julho/2026;
+4. custo de provider compatível com o preço praticável.
+
+**Não há gate de "o modelo precisa ter vantagem".** Esse gate foi removido conscientemente: o produto passou a ser a régua, e uma régua honesta que mede "não há vantagem aqui" está entregando exatamente o que promete.
 
 ---
 
 ## 4. Escopo funcional do MVP
 
-### 4.1 Tela principal - Live Board
+### 4.0 Tela principal - Laboratório de Cenários
+
+**É a tela do produto.** Tudo o mais existe para alimentá-la.
+
+**Montagem.** O usuário compõe um gatilho a partir de condições legíveis, sem escrever código:
+
+| Dimensão | Exemplos |
+|---|---|
+| Tempo | a partir do minuto N; nos últimos N minutos |
+| Placar | empatado; diferença de exatamente N; alguém vencendo por N+ |
+| Total de gols | exatamente N gols na partida até agora |
+| Cartões | há expulsão em campo |
+| Competição | restringir a uma ou mais ligas |
+
+E escolhe o que se espera: **sai mais um gol até o fim**, ou **dentro dos próximos N minutos**.
+
+**Resultado.** Executado sobre o dataset histórico, sempre com estes campos — nenhum é opcional:
+
+| Campo | Por quê |
+|---|---|
+| Ocorrências e partidas | O segundo é o tamanho efetivo da amostra |
+| Taxa de acerto | O que o usuário veio buscar |
+| **Intervalo de 95%** | O que separa vantagem de sorte |
+| **Odd mínima (pessimista)** | `1 / limite inferior` — o preço que realmente compensa |
+| Pior sequência observada | Base para o tamanho da entrada |
+| Fração de banca sugerida | `drawdown aceitável ÷ pior sequência` |
+| Veredito em linguagem clara | Incluindo "não compensa" e "amostra insuficiente" |
+
+**Comparação obrigatória com a taxa base.** Todo cenário é exibido ao lado da frequência do mesmo desfecho sem nenhum gatilho. Um cenário que não supera a taxa base não está informando nada — e o usuário precisa ver as duas colunas lado a lado para perceber isso.
+
+### 4.0.1 Monitoramento ao vivo de cenário salvo
+
+O usuário salva um cenário validado e o Golo avisa quando ele ocorre numa partida ao vivo, por Telegram ou na interface.
+
+A mensagem informa: qual cenário disparou, a partida e o minuto, a taxa histórica com intervalo, e a odd mínima necessária.
+
+**A mensagem nunca diz para apostar.** A formulação é *"o cenário que você monitora está acontecendo; historicamente ele dá X%, o que exige odd acima de Y"*. A decisão, o preço e o risco são do usuário. Ver §13 e §23.
+
+### 4.1 Tela de apoio - Live Board
+
+Mantida. Deixou de ser o produto e passou a ser a camada que reconhece cenários ao vivo, além de leitura de jogo por si só.
 
 A tela lista partidas monitoradas com:
 
@@ -1057,20 +1174,42 @@ Comparar qualquer modelo com:
 
 ## 13. Decision engine
 
-O predictor gera probabilidades. Um componente separado decide se deve criar um sinal.
+O predictor gera probabilidades. Um componente separado decide se um **cenário salvo pelo usuário** está ocorrendo e merece notificação.
 
-### 13.1 Regra de sinal do MVP
+A diferença em relação à versão 1.0 é de autoria: o Golo não decide mais que algo é uma boa entrada. **O usuário define o cenário; o Golo reconhece que ele está acontecendo e relata o que a história diz a respeito.** Isso não é uma sutileza de linguagem — muda quem é responsável pela tese e o que o produto precisa provar para funcionar.
 
-O MVP pode registrar sinais em modo sombra, sem recomendação pública:
+### 13.1 Regra de notificação
 
 ```text
-emitir sinal interno se:
+notificar o dono do cenário se:
+- o cenário está validado com amostra suficiente
 - data_quality >= 0.85
 - feed_lag <= limite da liga/provider
-- probabilidade calibrada >= threshold do horizonte
-- modelo não está fora do domínio conhecido
-- não houve gol ou suspensão de mercado nos últimos N segundos
+- o gatilho do cenário casa com o estado atual da partida
+- não houve gol nos últimos N segundos (o estado acabou de mudar)
+- não houve notificação para o mesmo cenário e partida
 ```
+
+**Gate adicional sobre a evidência.** Um cenário só é armado se o limite inferior do intervalo superar o ponto de equilíbrio da odd alvo. Sem isso, não arma.
+
+O motivo é direto: um alerta sobre um cenário não validado é um palpite com carimbo de autoridade — **pior do que nenhum alerta**, porque empresta credibilidade a ruído.
+
+### 13.1.1 Forma da mensagem
+
+Obrigatório em toda notificação:
+
+- qual cenário disparou, com o nome que **o usuário** deu;
+- partida e minuto;
+- taxa histórica **com intervalo e número de partidas**;
+- odd mínima derivada do limite pessimista;
+- rodapé legal (§23).
+
+Proibido:
+
+- verbo imperativo de aposta ("aposte", "entre", "aproveite");
+- linguagem de urgência ou escassez;
+- qualquer projeção de lucro;
+- omitir o intervalo ou o tamanho da amostra.
 
 ### 13.2 Value contra mercado
 
@@ -1577,7 +1716,11 @@ O feed ao vivo pode ser o maior custo real.
 
 ## 23. Jogo responsável e limite regulatório
 
-Este blueprint assume uma **ferramenta analítica privada**, sem custódia de dinheiro e sem execução de apostas.
+Este blueprint assume uma **ferramenta de medição**, sem custódia de dinheiro, sem execução de apostas e sem recomendação de entrada.
+
+O reposicionamento da versão 2.0 melhora a posição jurídica, e vale ser explícito sobre por quê: **vender uma régua é diferente de vender uma promessa.** O Golo afirma "este cenário ocorreu 1.356 vezes e resultou em gol 50,4% delas, com intervalo de 47,8% a 53,1%" — um fato histórico verificável. Não afirma que vai se repetir, não recomenda entrada e não projeta retorno.
+
+Isso **não** dispensa revisão jurídica. Ferramenta vendida a apostadores continua alcançada pelas regras de publicidade ampliadas em julho de 2026, que responsabilizam quem divulga. A posição é mais defensável, não isenta.
 
 No Brasil, somente operadores autorizados pela Secretaria de Prêmios e Apostas podem ofertar apostas de quota fixa nacionalmente. Desde 1 de janeiro de 2025, operadores federais autorizados usam domínio `.bet.br`.
 
@@ -1842,6 +1985,39 @@ A UI não deve ser a primeira parte. O primeiro produto real é o replay reprodu
 
 **Motivo:** validar ciência e operação antes de assumir risco financeiro, jurídico e comportamental.
 
+### ADR-008 - O produto é a régua, não a previsão
+
+**Data:** 26 de julho de 2026
+**Status:** aceito, substitui o posicionamento da versão 1.0
+
+**Decisão:** o Golo passa a ser vendido como ferramenta de validação de cenários. A previsão ao vivo continua existindo como infraestrutura e como leitura de jogo, mas deixa de ser a proposta de valor.
+
+**Motivo — o que foi medido.** Sobre 3.287 partidas com 80.261 chutes datados, o modelo empata com uma taxa constante em todos os horizontes. A única "vitória" (Brier de gol até o fim, `0,15036` contra `0,15042`) tem intervalo de 95% agrupado por partida de `[-0,001025, +0,000853]` — atravessa o zero. Não é vantagem, é ruído.
+
+**Por que dado melhor não resolve.** Comprar xG elevaria a precisão absoluta, mas as casas de apostas operam com o mesmo dado ou melhor. Vantagem vem de possuir informação que o outro lado não possui, não de possuir informação boa. Nenhuma compra ao alcance deste projeto cria essa assimetria.
+
+**O que a medição revelou de valioso.** O aparato construído para provar a vantagem — intervalos de Wilson, agrupamento por partida, uma observação por partida, testes selados com contrato imutável, recusa em armar sem evidência — é rigoroso de um jeito que quase nenhum produto do setor é. Essa peça não compete com Opta nem com bet365, porque eles não vendem honestidade sobre a própria incerteza.
+
+**Consequências aceitas:**
+
+- O mercado de dicas fica fora de alcance, e isso é definitivo: esse público quer confiança, não calibração;
+- O sucesso do produto deixa de depender de vencer o mercado;
+- Um veredito "não há vantagem aqui" passa a ser entrega, não fracasso;
+- O bot de Telegram sobrevive inteiro, com autoria trocada — ele relata cenários **do usuário**, não teses do Golo.
+
+**O que teria mudado a decisão:** um intervalo de confiança inteiramente abaixo de zero em qualquer horizonte. Não houve.
+
+### ADR-009 - Qualificação exige significância, não comparação
+
+**Data:** 26 de julho de 2026
+**Status:** aceito
+
+**Decisão:** nenhuma estratégia é armada com base em comparação de estimativas pontuais. O intervalo de confiança, agrupado por partida, precisa ficar inteiramente do lado favorável.
+
+**Motivo:** o critério anterior comparava dois Brier e declarava vitória se um fosse menor. Com dados de chute reais, o modelo superou o baseline por `0,00006` e se autodeclarou qualificado — a **um portão** de armar alertas reais com dinheiro do usuário do outro lado. Um bootstrap agrupado por partida mostrou que a diferença era indistinguível de zero.
+
+**Consequência:** é esperado e correto que o sistema permaneça em silêncio por longos períodos. Silêncio por ausência de evidência é o comportamento projetado, não um defeito a contornar.
+
 ---
 
 ## 29. Fontes e referências
@@ -1878,19 +2054,27 @@ A UI não deve ser a primeira parte. O primeiro produto real é o replay reprodu
 
 ## 30. Conclusão
 
-O MVP correto não é uma plataforma complexa de apostas. É um laboratório operacional que responde, de maneira auditável:
+O MVP correto não é uma plataforma de apostas nem um oráculo de gols. É uma régua que responde, de maneira auditável:
 
-> Dado tudo o que era realmente conhecido neste instante, qual era a probabilidade calibrada de ocorrer um gol dentro do horizonte definido?
+> Este cenário que eu observo no futebol se repete com frequência suficiente para valer o preço que estão me oferecendo?
 
-A arquitetura proposta mantém esse foco:
+E que responde **"não"** quando é não.
+
+A versão 1.0 apostava que prever gols melhor produziria valor. A medição refutou isso: o modelo empata com a taxa base do futebol, e nenhuma compra de dado ao alcance deste projeto cria a assimetria necessária para vencer um mercado eficiente.
+
+O que sobreviveu à refutação foi o aparato construído para testá-la. Intervalos de confiança, agrupamento por partida, uma observação por oportunidade, contratos selados, e a disciplina de permanecer em silêncio sem evidência. Isso é raro no setor, e é a única peça deste projeto que não disputa espaço com quem tem dado melhor e décadas de vantagem.
+
+Os princípios de arquitetura permanecem:
 
 - um provider substituível;
 - um log temporal confiável;
 - replay antes de produção;
 - modelos simples antes de modelos sofisticados;
-- probabilidades antes de sinais;
-- calibração antes de ROI;
+- **medição antes de afirmação**;
+- **intervalo antes de estimativa pontual**;
 - custos baixos antes de escala;
 - segurança e jogo responsável antes de monetização.
 
-A próxima decisão de engenharia deve ser iniciar o **Gate 0: domínio, esquema canônico, provider de replay e golden tests**.
+A próxima decisão de engenharia é tirar o backtester da linha de comando e colocá-lo numa tela onde o usuário monte o próprio cenário — a menor distância entre o que existe hoje e algo vendável.
+
+> Uma ferramenta que só sabe encontrar oportunidade não é ferramenta, é vitrine. O valor do Golo está em ser confiável quando diz que não há nada ali.
