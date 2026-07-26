@@ -1,6 +1,7 @@
 package predictor
 
 import (
+	"math"
 	"testing"
 
 	"github.com/enzotriches/golo/internal/domain"
@@ -38,6 +39,44 @@ func TestHazardHorizonsAreStrictlyOrderedWithTimeRemaining(t *testing.T) {
 	got := predictAt(t, p, 4200, map[string]float64{})
 	if !(got.GoalNext5m < got.GoalNext10m && got.GoalNext10m < got.GoalBeforeFullTime) {
 		t.Fatalf("expected 5m < 10m < FT with 20+ minutes left, got %+v", got)
+	}
+}
+
+func TestHazardReturnsPoissonCountProbabilityAndAuditableContributions(t *testing.T) {
+	p := hazardPredictor(t)
+	state := domain.MatchState{
+		MatchID: "m1", ClockSeconds: 4200, Status: domain.MatchStatusLive,
+		CompetitionID: "648",
+	}
+	out, err := p.Predict(state, map[string]float64{
+		"match_time_frac": 0.77, "match_time_frac_sq": 0.59,
+		"abs_score_diff": 1, "activity_coverage": 1, "shots_10m_total": 4,
+	}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mu := out.ExpectedGoalsRemaining
+	wantTwo := 1 - math.Exp(-mu)*(1+mu)
+	if math.Abs(out.Probabilities.TwoOrMoreBeforeFullTime-wantTwo) > 0.0011 {
+		t.Fatalf("P(N>=2)=%.4f want %.4f from mu %.4f", out.Probabilities.TwoOrMoreBeforeFullTime, wantTwo, mu)
+	}
+	var sum float64
+	for _, contribution := range out.Contributions {
+		sum += contribution.Contribution
+	}
+	exponent := p.hazard.stateExponent(map[string]float64{
+		"match_time_frac": 0.77, "match_time_frac_sq": 0.59,
+		"abs_score_diff": 1, "activity_coverage": 1, "shots_10m_total": 4,
+	})
+	if math.Abs(sum-exponent) > 1e-10 {
+		t.Fatalf("contributions sum %.12f does not reproduce exponent %.12f", sum, exponent)
+	}
+}
+
+func TestUnqualifiedArtifactCannotPowerAlerts(t *testing.T) {
+	p := hazardPredictor(t)
+	if p.AlertQualified(1) || p.AlertQualified(2) {
+		t.Fatal("current artifact did not beat the chronological baseline and must remain fail-closed")
 	}
 }
 

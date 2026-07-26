@@ -4,17 +4,12 @@ Golo ML - historical dataset builder.
 
 Pulls finished fixtures for the configured leagues/seasons from SportMonks and
 caches the fields needed to reconstruct a match minute by minute: goal times,
-card times, and the true end-of-match clock from the period list.
+card times, timestamped activity events, and the true end-of-match clock from
+the period list.
 
-What this deliberately does NOT collect
----------------------------------------
-Shots, corners and dangerous attacks. SportMonks publishes those as cumulative
-*statistics* on a fixture, not as timestamped events, so for a finished match
-only the final totals exist. There is no way to recover "shots in the ten
-minutes before minute 63" from history, which means the activity terms of the
-hazard model cannot be fitted here and stay a documented prior. What is
-recoverable — how the goal rate varies with match time, scoreline and red
-cards — is exactly the part that dominates the full-time horizon.
+Activity is only retained when the provider supplies a genuine timestamped
+timeline event. Final cumulative fixture statistics are never spread backward
+over a match: doing so would leak future information into the training rows.
 
 Output: ml/data/fixtures.jsonl, one match per line. Re-running is cheap: the
 raw pages are cached under ml/data/raw/ and only missing pages are fetched.
@@ -58,6 +53,17 @@ RED_TYPES = {TYPE_RED, TYPE_SECOND_YELLOW}
 
 DATA_DIR = pathlib.Path(__file__).resolve().parents[1] / "data"
 RAW_DIR = DATA_DIR / "raw"
+
+ACTIVITY_NAMES = {
+    "shot": "shots_10m_total",
+    "shots": "shots_10m_total",
+    "shot on target": "shots_on_target_10m_total",
+    "shots on target": "shots_on_target_10m_total",
+    "corner": "corners_10m_total",
+    "corners": "corners_10m_total",
+    "dangerous attack": "dangerous_attacks_10m_total",
+    "dangerous attacks": "dangerous_attacks_10m_total",
+}
 
 
 def api_key() -> str:
@@ -177,7 +183,7 @@ def distill(fixture: dict, league_id: int, season_name: str):
 
     end = (first_len + second_len) * 60
 
-    goals, reds = [], []
+    goals, reds, activity = [], [], []
     for ev in fixture.get("events") or []:
         tid = ev.get("type_id")
         sec = event_second(ev, first_len)
@@ -192,9 +198,17 @@ def distill(fixture: dict, league_id: int, season_name: str):
             goals.append({"second": sec, "home": bool(scoring_home)})
         elif tid in RED_TYPES:
             reds.append({"second": sec, "home": ev.get("participant_id") == home})
+        else:
+            type_obj = ev.get("type") or {}
+            raw_name = type_obj.get("name") if isinstance(type_obj, dict) else type_obj
+            raw_name = raw_name or ev.get("type_name") or ev.get("name") or ""
+            kind = ACTIVITY_NAMES.get(str(raw_name).strip().lower())
+            if kind:
+                activity.append({"second": sec, "kind": kind})
 
     goals.sort(key=lambda g: g["second"])
     reds.sort(key=lambda r: r["second"])
+    activity.sort(key=lambda e: e["second"])
 
     return {
         "fixture_id": fixture["id"],
@@ -205,6 +219,8 @@ def distill(fixture: dict, league_id: int, season_name: str):
         "end_second": end,
         "goals": goals,
         "red_cards": reds,
+        "activity_events": activity,
+        "activity_timeline_available": bool(activity),
     }
 
 
@@ -231,7 +247,7 @@ def main():
                         "/fixtures",
                         {
                             "filters": f"fixtureSeasons:{season_id}",
-                            "include": "events;participants;periods",
+                            "include": "events.type;participants;periods",
                             "per_page": 50,
                             "page": page,
                         },

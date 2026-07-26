@@ -74,10 +74,11 @@ type Trigger func(State) bool
 // live over markets reduce to: at 1-1, "over 2.5 goals" is exactly the
 // question "will there be one more goal before the end?".
 type Scenario struct {
-	Name           string
-	Description    string
-	Trigger        Trigger
-	HorizonSeconds int
+	Name            string  `json:"name"`
+	Description     string  `json:"description"`
+	Trigger         Trigger `json:"-"`
+	HorizonSeconds  int     `json:"horizonSeconds"`
+	AdditionalGoals int     `json:"additionalGoals"`
 }
 
 // Occurrence is one time a scenario fired, and what followed.
@@ -154,7 +155,7 @@ func Evaluate(sc Scenario, matches []MatchTimeline) Result {
 			occurrences = append(occurrences, Occurrence{
 				MatchID: match.MatchID,
 				Second:  second,
-				Won:     goalBetween(match.Goals, second, until),
+				Won:     goalsBetween(match.Goals, second, until) >= max(1, sc.AdditionalGoals),
 			})
 			break // one observation per match
 		}
@@ -173,7 +174,7 @@ func Evaluate(sc Scenario, matches []MatchTimeline) Result {
 	}
 
 	result.HitRate = float64(result.Wins) / float64(result.Occurrences)
-	result.RateLow, result.RateHigh = jeffreysInterval(result.Wins, result.Occurrences)
+	result.RateLow, result.RateHigh = wilsonInterval(result.Wins, result.Occurrences)
 	result.BreakEvenOdds = oddsFor(result.HitRate)
 	// A lower rate demands a higher price, so the bounds cross over.
 	result.OddsLow = oddsFor(result.RateHigh)
@@ -210,13 +211,14 @@ func stateAt(match MatchTimeline, second int) State {
 	return state
 }
 
-func goalBetween(goals []Goal, from, until int) bool {
+func goalsBetween(goals []Goal, from, until int) int {
+	count := 0
 	for _, g := range goals {
 		if g.Second > from && g.Second <= until {
-			return true
+			count++
 		}
 	}
-	return false
+	return count
 }
 
 // longestLossStreak reports the longest observed run of losses, in the order
@@ -280,12 +282,19 @@ func MinimumSampleFor(trueRate, targetOdds float64) int {
 	}
 	for n := 20; n <= 200000; n += 10 {
 		wins := int(math.Round(trueRate * float64(n)))
-		low, _ := jeffreysInterval(wins, n)
+		low, _ := wilsonInterval(wins, n)
 		if low > breakEven {
 			return n
 		}
 	}
 	return -1
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 // Verdict renders the result as a sentence that leads with the uncertainty

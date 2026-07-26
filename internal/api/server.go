@@ -7,10 +7,14 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
+	"github.com/enzotriches/golo/internal/adminauth"
 	"github.com/enzotriches/golo/internal/evaluation"
 	"github.com/enzotriches/golo/internal/eventstore"
 	"github.com/enzotriches/golo/internal/publisher"
+	"github.com/enzotriches/golo/internal/signals"
+	"github.com/enzotriches/golo/internal/telegram"
 )
 
 type ReplayController interface {
@@ -27,7 +31,15 @@ type Server struct {
 	liveCache  map[string]publisher.MatchUpdate
 
 	// modelVersion scopes /api/metrics to the model actually running.
-	modelVersion string
+	modelVersion   string
+	adminAuth      *adminauth.Service
+	telegram       *telegram.Service
+	signalEngine   *signals.Engine
+	datasetPath    string
+	allowedOrigin  string
+	providerHealth func() any
+	loginMu        sync.Mutex
+	loginAttempts  map[string][]time.Time
 }
 
 // NewServer builds the HTTP API. modelVersion identifies the model currently
@@ -35,12 +47,29 @@ type Server struct {
 // blend of every version the database has ever seen. Empty means "evaluate
 // everything", which is only appropriate when no model is loaded.
 func NewServer(store *eventstore.SQLiteStore, pub *publisher.Publisher, replayCtrl ReplayController, modelVersion string) *Server {
+	return NewServerWithAdmin(store, pub, replayCtrl, modelVersion, AdminDependencies{})
+}
+
+type AdminDependencies struct {
+	Auth           *adminauth.Service
+	Telegram       *telegram.Service
+	SignalEngine   *signals.Engine
+	DatasetPath    string
+	AllowedOrigin  string
+	ProviderHealth func() any
+}
+
+func NewServerWithAdmin(store *eventstore.SQLiteStore, pub *publisher.Publisher, replayCtrl ReplayController, modelVersion string, deps AdminDependencies) *Server {
 	srv := &Server{
 		store:        store,
 		pub:          pub,
 		replayCtrl:   replayCtrl,
 		liveCache:    make(map[string]publisher.MatchUpdate),
 		modelVersion: modelVersion,
+		adminAuth:    deps.Auth, telegram: deps.Telegram, signalEngine: deps.SignalEngine,
+		datasetPath: deps.DatasetPath, allowedOrigin: deps.AllowedOrigin,
+		providerHealth: deps.ProviderHealth,
+		loginAttempts:  make(map[string][]time.Time),
 	}
 
 	// Listen to publisher updates to maintain an in-memory cache of live matches
@@ -64,13 +93,20 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/matches/", s.handleMatchDetail)
 	mux.HandleFunc("/api/replay/control", s.handleReplayControl)
 	mux.HandleFunc("/api/metrics", s.handleMetrics)
+	mux.HandleFunc("/api/admin/login", s.handleAdminLogin)
+	mux.Handle("/api/admin/", s.requireAdmin(http.HandlerFunc(s.handleAdmin)))
+	mux.HandleFunc("/api/telegram/webhook", s.handleTelegramWebhook)
 
 	return s.corsMiddleware(mux)
 }
 
 func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
+		origin := s.allowedOrigin
+		if origin == "" {
+			origin = "*"
+		}
+		w.Header().Set("Access-Control-Allow-Origin", origin)
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
