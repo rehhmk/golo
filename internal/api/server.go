@@ -232,13 +232,13 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	goalSeconds, endSeconds, err := s.store.GetMatchGoalAndEndSeconds()
+	outcomes, err := s.store.GetMatchOutcomes()
 	if err != nil {
-		http.Error(w, "Failed to load match events: "+err.Error(), http.StatusInternalServerError)
+		http.Error(w, "Failed to load match outcomes: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	report := evaluation.Evaluate(predictions, goalSeconds, endSeconds)
+	report := evaluation.Evaluate(predictions, outcomes)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(report)

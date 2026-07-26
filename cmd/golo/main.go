@@ -178,7 +178,11 @@ func runIngestionLoop(
 					log.Printf("Failed to extract features: %v", err)
 					continue
 				}
-				_ = store.SaveSnapshot(snapshot)
+				if err := store.SaveSnapshot(snapshot); err != nil {
+					// Discarded silently until now, which would have left holes
+					// in the stored feature history with nothing to notice them.
+					log.Printf("Failed to save feature snapshot: %v", err)
+				}
 
 				// 5. Evaluate data quality
 				qualityScore := eval.EvaluateDataQuality(state)
@@ -198,13 +202,13 @@ func runIngestionLoop(
 				// 7.5. Compute this match's own "goal in next 10m" track
 				// record, for the per-card "how right have we been" meter.
 				trackRecord := publisher.TrackRecord{}
-				goalSeconds, endSecond, err := store.GetGoalAndEndSecondsForMatch(m.ID)
+				outcome, err := store.GetOutcomeForMatch(m.ID)
 				if err != nil {
 					log.Printf("Failed to load track record data: %v", err)
 				} else if matchPredictions, err := store.GetMatchPredictions(m.ID); err != nil {
 					log.Printf("Failed to load match predictions for track record: %v", err)
 				} else {
-					tr := evaluation.ComputeMatchTrackRecord(matchPredictions, goalSeconds, endSecond)
+					tr := evaluation.ComputeMatchTrackRecord(matchPredictions, outcome)
 					trackRecord = publisher.TrackRecord{AccuracyPct: tr.AccuracyPct, ResolvedCount: tr.ResolvedCount}
 				}
 
