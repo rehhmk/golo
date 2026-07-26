@@ -1,93 +1,74 @@
 import React from 'react';
-import { Activity, PlayCircle, BarChart3, Radio, ShieldCheck, Target } from 'lucide-react';
+import { cn } from '@/lib/utils';
+
+export type ActiveTab = 'live' | 'detail' | 'replay' | 'analytics' | 'howitworks';
 
 interface NavbarProps {
-  activeTab: 'live' | 'detail' | 'replay' | 'evaluation';
-  setActiveTab: (tab: 'live' | 'detail' | 'replay' | 'evaluation') => void;
+  activeTab: ActiveTab;
+  setActiveTab: (tab: ActiveTab) => void;
   isLiveConnected: boolean;
   hitRatePct: number | null;
 }
 
+const NAV_ITEMS: { key: ActiveTab; label: string }[] = [
+  { key: 'live', label: 'Ao vivo' },
+  { key: 'replay', label: 'Replay' },
+  { key: 'analytics', label: 'Analytics' },
+  { key: 'howitworks', label: 'Como funciona' },
+];
+
 export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, isLiveConnected, hitRatePct }) => {
   return (
-    <header className="bg-slate-900 border-b border-slate-800 sticky top-0 z-50">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-        
-        {/* Brand Logo & Title */}
-        <div className="flex items-center gap-3 cursor-pointer" onClick={() => setActiveTab('live')}>
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-500 to-emerald-400 flex items-center justify-center shadow-lg shadow-emerald-500/20">
-            <Activity className="w-6 h-6 text-slate-950 stroke-[2.5]" />
-          </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="font-extrabold text-xl tracking-tight text-slate-50 font-sans">GOLO</span>
-              <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded font-mono font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                MVP v1.0
-              </span>
-            </div>
-            <p className="text-xs text-slate-400 font-mono hidden sm:block">Real-Time Football Probability Engine</p>
-          </div>
-        </div>
+    <header className="sticky top-0 z-50 bg-[#020617]/90 backdrop-blur-md border-b border-white/[0.08]">
+      <div className="max-w-[1400px] mx-auto px-5 sm:px-8 h-14 flex items-center gap-8">
 
-        {/* Navigation Tabs */}
-        <nav className="flex items-center gap-1 sm:gap-2">
-          <button
-            onClick={() => setActiveTab('live')}
-            className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold transition-all ${
-              activeTab === 'live'
-                ? 'bg-slate-800 text-emerald-400 border border-slate-700 shadow-sm'
-                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
-            }`}
-          >
-            <Radio className="w-4 h-4" />
-            <span>Live Board</span>
-          </button>
+        {/* Wordmark */}
+        <button onClick={() => setActiveTab('live')} className="flex items-baseline gap-2 shrink-0 group">
+          <span className="text-[17px] font-semibold tracking-[-0.02em] text-slate-50">Golo</span>
+          <span className="font-mono text-[10px] uppercase tracking-wider text-slate-600 group-hover:text-slate-500 transition-colors hidden sm:inline">
+            Probability Engine
+          </span>
+        </button>
 
-          <button
-            onClick={() => setActiveTab('replay')}
-            className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold transition-all ${
-              activeTab === 'replay'
-                ? 'bg-slate-800 text-emerald-400 border border-slate-700 shadow-sm'
-                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
-            }`}
-          >
-            <PlayCircle className="w-4 h-4" />
-            <span>Replay Engine</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('evaluation')}
-            className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold transition-all ${
-              activeTab === 'evaluation'
-                ? 'bg-slate-800 text-emerald-400 border border-slate-700 shadow-sm'
-                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
-            }`}
-          >
-            <BarChart3 className="w-4 h-4" />
-            <span>Avaliação</span>
-          </button>
+        {/* Primary nav */}
+        <nav className="flex items-center gap-0.5 flex-1 min-w-0 overflow-x-auto">
+          {NAV_ITEMS.map(({ key, label }) => {
+            const isActive = activeTab === key || (key === 'live' && activeTab === 'detail');
+            return (
+              <button
+                key={key}
+                onClick={() => setActiveTab(key)}
+                className={cn(
+                  'relative px-3 py-2 text-[13px] whitespace-nowrap transition-colors',
+                  isActive ? 'text-slate-50' : 'text-slate-500 hover:text-slate-300'
+                )}
+              >
+                {label}
+                {isActive && <span className="absolute inset-x-3 -bottom-px h-px bg-emerald-400" />}
+              </button>
+            );
+          })}
         </nav>
 
-        {/* System Status Badge */}
-        <div className="flex items-center gap-2">
-          <div className={`w-2.5 h-2.5 rounded-full ${isLiveConnected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
-          <span className="text-xs font-mono text-slate-400 hidden md:inline">
-            {isLiveConnected ? 'SYSTEM LIVE' : 'OFFLINE / DEMO'}
-          </span>
+        {/* Status cluster */}
+        <div className="flex items-center gap-4 shrink-0 font-mono text-[11px] tabular-nums">
           {hitRatePct !== null && (
-            <div
-              className="hidden md:flex items-center gap-1 text-[11px] font-mono text-slate-400 bg-slate-950 px-2.5 py-1 rounded-lg border border-slate-800"
-              title="% de previsões de gol resolvidas que acertaram o resultado"
-            >
-              <Target className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Acerto: {Math.round(hitRatePct)}%</span>
-            </div>
+            <span className="hidden md:flex items-baseline gap-1.5 text-slate-600" title="Acerto histórico das previsões resolvidas">
+              <span className="uppercase tracking-wider">Acerto</span>
+              <span className="text-slate-300">{Math.round(hitRatePct)}%</span>
+            </span>
           )}
-
-          <div className="hidden lg:flex items-center gap-1 text-[11px] font-mono text-slate-400 bg-slate-950 px-2.5 py-1 rounded-lg border border-slate-800">
-            <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Strict Audit</span>
-          </div>
+          <span className="flex items-center gap-1.5" title={isLiveConnected ? 'Conectado ao motor ao vivo' : 'Sem conexão — exibindo dados de demonstração'}>
+            <span
+              className={cn(
+                'w-1.5 h-1.5 rounded-full',
+                isLiveConnected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'
+              )}
+            />
+            <span className={cn('uppercase tracking-wider hidden sm:inline', isLiveConnected ? 'text-slate-500' : 'text-amber-400/80')}>
+              {isLiveConnected ? 'Live' : 'Demo'}
+            </span>
+          </span>
         </div>
 
       </div>
