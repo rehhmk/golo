@@ -84,6 +84,10 @@ function computeFactors(m: MatchUpdate): Factor[] {
   return factors.sort((a, b) => b.magnitude - a.magnitude).slice(0, 4);
 }
 
+// Below this many distinct finished matches, the aggregate metrics rest on
+// too few independent outcomes to be read as a measurement.
+const MIN_MATCHES_FOR_CONFIDENCE = 10;
+
 const EMPTY_METRICS: EvaluationMetrics = {
   brierScore: 0,
   logLoss: 0,
@@ -91,6 +95,8 @@ const EMPTY_METRICS: EvaluationMetrics = {
   hitRatePct: 0,
   calibrationCurve: [],
   totalSnapshots: 0,
+  resolvedCount: 0,
+  matchCount: 0,
   dataQualityAvg: 0,
   staleFeedPct: 0,
   modelVersion: '—',
@@ -139,7 +145,16 @@ export const EvaluationDashboard: React.FC<EvaluationDashboardProps> = ({ matche
     return <div className="py-20 text-center text-[13px] text-slate-500">Carregando métricas…</div>;
   }
 
-  const hasData = metrics.totalSnapshots > 0;
+  // Gate on what was actually measured, not on how many predictions were made.
+  // Those differ by orders of magnitude: a prediction only becomes evidence
+  // once its match has finished, so gating on the prediction count renders
+  // zeroes for every metric as though the model had been measured and scored 0.
+  const hasData = metrics.resolvedCount > 0;
+
+  // Every prediction within one match shares that match's single outcome, so
+  // the number of matches — not of samples — is the evidence actually behind
+  // these figures. Below this many, the metrics are anecdote.
+  const isThin = metrics.matchCount < MIN_MATCHES_FOR_CONFIDENCE;
 
   return (
     <div>
@@ -149,11 +164,27 @@ export const EvaluationDashboard: React.FC<EvaluationDashboardProps> = ({ matche
         description="Calibração e erro das previsões, medidos contra resultados reais."
         meta={
           <div className="font-mono text-[11px] tabular-nums text-slate-500">
-            <span className="text-slate-200">{metrics.totalSnapshots.toLocaleString('pt-BR')}</span> previsões ·{' '}
-            {metrics.modelVersion}
+            <span className="text-slate-200">{metrics.resolvedCount.toLocaleString('pt-BR')}</span> resolvidas de{' '}
+            <span className="text-slate-200">{metrics.matchCount}</span>{' '}
+            {metrics.matchCount === 1 ? 'partida' : 'partidas'} · {metrics.modelVersion}
           </div>
         }
       />
+
+      {/* An honest health warning beats a confident-looking number. Without it
+          a reader takes "67,6% de acerto" at face value, unaware it rests on
+          two match outcomes. */}
+      {hasData && isThin && (
+        <div className="mb-6 rounded-md border border-amber-500/25 bg-amber-500/[0.06] px-4 py-3">
+          <p className="text-[13px] leading-relaxed text-amber-200/90">
+            <span className="font-medium">Amostra insuficiente.</span> Estes números vêm de{' '}
+            <span className="font-mono tabular-nums">{metrics.matchCount}</span>{' '}
+            {metrics.matchCount === 1 ? 'partida encerrada' : 'partidas encerradas'}. Como todas as
+            previsões de uma mesma partida dividem um único desfecho, o que pesa aqui é a
+            quantidade de partidas — não a de previsões. Trate como indício, não como medida.
+          </p>
+        </div>
+      )}
 
       {/* Metric row — no cards, just a ruled grid */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-px bg-white/[0.06] border border-white/[0.06] rounded-md overflow-hidden mb-8">

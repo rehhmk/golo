@@ -8,10 +8,12 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	_ "modernc.org/sqlite"
 
 	"github.com/enzotriches/golo/internal/domain"
+	"github.com/enzotriches/golo/internal/evaluation"
 )
 
 type SQLiteStore struct {
@@ -377,73 +379,190 @@ func (s *SQLiteStore) getPredictions(modelVersion string) ([]domain.Prediction, 
 	return preds, nil
 }
 
-// GetMatchGoalAndEndSeconds scans every stored event once and returns, per
-// match: the match-seconds at which a goal occurred (sorted ascending), and
-// the highest match-second seen for that match (used as a proxy for "how far
-// the match had progressed", to bound the goal-before-full-time horizon).
-func (s *SQLiteStore) GetMatchGoalAndEndSeconds() (goalSeconds map[string][]int, endSeconds map[string]int, err error) {
+// matchProgress is the per-match lifecycle data the evaluator needs, read
+// from the two places that actually track it.
+type matchProgress struct {
+	status    string
+	clock     int
+	updatedAt string
+}
+
+// abandonedAfter is how long a match may go without an update before a match
+// still marked live is treated as over.
+//
+// A finished match normally drops out of the provider's in-play feed, and the
+// final status is only recorded if a poll catches it in the brief window
+// where the feed still lists it as full-time. Miss that window — a restart, a
+// rate-limit backoff — and the match stays LIVE forever, permanently
+// unresolvable. A match that stopped updating hours ago in the 90th minute is
+// over; refusing to say so costs real evaluation data.
+const abandonedAfter = 3 * time.Hour
+
+// minFinishedSecond is the match clock past which a stale match is considered
+// complete rather than merely interrupted.
+const minFinishedSecond = 85 * 60
+
+// GetMatchOutcomes returns, per match, when goals happened, how far the match
+// got, and whether it is over.
+//
+// The end of a match is taken from match_states.clock_seconds, not from the
+// last stored event. The provider's event feed carries only goals, cards and
+// substitutions and never emits a full-time marker, so the final event is
+// typically minutes short of the whistle — in production, matches were ending
+// 8 to 14 minutes after their last event. Using the event as the boundary
+// made every metric blind to the closing stretch of every match, which is
+// precisely where scoring is most likely.
+func (s *SQLiteStore) GetMatchOutcomes() (map[string]evaluation.MatchOutcome, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	progress, err := s.matchProgress()
+	if err != nil {
+		return nil, err
+	}
+
 	rows, err := s.db.Query(`SELECT match_id, match_second, event_type FROM events ORDER BY match_id ASC, match_second ASC;`)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	defer rows.Close()
 
-	goalSeconds = make(map[string][]int)
-	endSeconds = make(map[string]int)
+	goals := make(map[string][]int)
+	lastEvent := make(map[string]int)
 
 	for rows.Next() {
 		var matchID, eventType string
 		var matchSecond int
 		if err := rows.Scan(&matchID, &matchSecond, &eventType); err != nil {
-			return nil, nil, err
+			return nil, err
 		}
-
-		if matchSecond > endSeconds[matchID] {
-			endSeconds[matchID] = matchSecond
+		if matchSecond > lastEvent[matchID] {
+			lastEvent[matchID] = matchSecond
 		}
+		if domain.EventType(eventType).IsGoalEvent() {
+			goals[matchID] = append(goals[matchID], matchSecond)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 
-		et := domain.EventType(eventType)
-		if et.IsGoalEvent() {
-			goalSeconds[matchID] = append(goalSeconds[matchID], matchSecond)
+	outcomes := make(map[string]evaluation.MatchOutcome, len(progress))
+	for matchID, prog := range progress {
+		outcomes[matchID] = buildOutcome(goals[matchID], lastEvent[matchID], prog)
+	}
+	// A match with events but no row in matches still deserves its goals.
+	for matchID, goalSeconds := range goals {
+		if _, ok := outcomes[matchID]; !ok {
+			outcomes[matchID] = evaluation.MatchOutcome{
+				GoalSeconds: goalSeconds,
+				FinalSecond: lastEvent[matchID],
+			}
 		}
 	}
 
-	return goalSeconds, endSeconds, nil
+	return outcomes, nil
 }
 
-// GetGoalAndEndSecondsForMatch is the single-match, indexed-lookup
-// equivalent of GetMatchGoalAndEndSeconds — used on the ingestion hot path
-// (once per poll tick per match) where scanning every event in the
-// database would be wasteful.
-func (s *SQLiteStore) GetGoalAndEndSecondsForMatch(matchID string) (goalSeconds []int, endSecond int, err error) {
+// GetOutcomeForMatch is the single-match, indexed-lookup equivalent of
+// GetMatchOutcomes, for the ingestion hot path where scanning every event in
+// the database once per poll tick would be wasteful.
+func (s *SQLiteStore) GetOutcomeForMatch(matchID string) (evaluation.MatchOutcome, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	rows, err := s.db.Query(`SELECT match_second, event_type FROM events WHERE match_id = ? ORDER BY match_second ASC;`, matchID)
 	if err != nil {
-		return nil, 0, err
+		return evaluation.MatchOutcome{}, err
 	}
 	defer rows.Close()
 
+	var goalSeconds []int
+	lastEvent := 0
 	for rows.Next() {
 		var matchSecond int
 		var eventType string
 		if err := rows.Scan(&matchSecond, &eventType); err != nil {
-			return nil, 0, err
+			return evaluation.MatchOutcome{}, err
 		}
-
-		if matchSecond > endSecond {
-			endSecond = matchSecond
+		if matchSecond > lastEvent {
+			lastEvent = matchSecond
 		}
 		if domain.EventType(eventType).IsGoalEvent() {
 			goalSeconds = append(goalSeconds, matchSecond)
 		}
 	}
+	if err := rows.Err(); err != nil {
+		return evaluation.MatchOutcome{}, err
+	}
 
-	return goalSeconds, endSecond, nil
+	var prog matchProgress
+	row := s.db.QueryRow(`
+	SELECT m.status, COALESCE(ms.clock_seconds, 0), m.updated_at
+	FROM matches m LEFT JOIN match_states ms ON ms.match_id = m.id
+	WHERE m.id = ?;`, matchID)
+	if err := row.Scan(&prog.status, &prog.clock, &prog.updatedAt); err != nil && err != sql.ErrNoRows {
+		return evaluation.MatchOutcome{}, err
+	}
+
+	return buildOutcome(goalSeconds, lastEvent, prog), nil
+}
+
+func (s *SQLiteStore) matchProgress() (map[string]matchProgress, error) {
+	rows, err := s.db.Query(`
+	SELECT m.id, m.status, COALESCE(ms.clock_seconds, 0), m.updated_at
+	FROM matches m LEFT JOIN match_states ms ON ms.match_id = m.id;`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make(map[string]matchProgress)
+	for rows.Next() {
+		var id string
+		var prog matchProgress
+		if err := rows.Scan(&id, &prog.status, &prog.clock, &prog.updatedAt); err != nil {
+			return nil, err
+		}
+		out[id] = prog
+	}
+	return out, rows.Err()
+}
+
+// buildOutcome combines the event timeline with the match lifecycle.
+func buildOutcome(goalSeconds []int, lastEventSecond int, prog matchProgress) evaluation.MatchOutcome {
+	final := prog.clock
+	if lastEventSecond > final {
+		// An event beyond the recorded clock means the clock is behind; trust
+		// whichever reached further, never less than what we have seen.
+		final = lastEventSecond
+	}
+
+	finished := domain.MatchStatus(prog.status) == domain.MatchStatusFinished
+	if !finished && final >= minFinishedSecond && staleFor(prog.updatedAt) > abandonedAfter {
+		finished = true
+	}
+
+	return evaluation.MatchOutcome{
+		GoalSeconds: goalSeconds,
+		FinalSecond: final,
+		Finished:    finished,
+	}
+}
+
+// staleFor reports how long ago a match row was last written. An unparseable
+// or missing timestamp yields zero, which keeps the match unresolved rather
+// than guessing it is over.
+func staleFor(updatedAt string) time.Duration {
+	if updatedAt == "" {
+		return 0
+	}
+	for _, layout := range []string{"2006-01-02 15:04:05", time.RFC3339Nano, time.RFC3339} {
+		if ts, err := time.Parse(layout, updatedAt); err == nil {
+			return time.Since(ts)
+		}
+	}
+	return 0
 }
 
 func (s *SQLiteStore) GetMatchEvents(matchID string) ([]domain.MatchEvent, error) {

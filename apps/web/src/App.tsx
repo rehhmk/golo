@@ -192,8 +192,14 @@ export const App: React.FC = () => {
       fetch(`${API_BASE_URL}/api/metrics`)
         .then((res) => res.json())
         .then((data) => {
-          if (typeof data.hitRatePct === 'number' && data.totalSnapshots > 0) {
+          // Require both a resolved outcome and enough distinct matches behind
+          // it. Predictions inside one match are not independent evidence, so a
+          // headline accuracy drawn from two matches would be noise wearing a
+          // percentage sign.
+          if (typeof data.hitRatePct === 'number' && data.resolvedCount > 0 && data.matchCount >= 10) {
             setHitRatePct(data.hitRatePct);
+          } else {
+            setHitRatePct(null);
           }
         })
         .catch(() => {});

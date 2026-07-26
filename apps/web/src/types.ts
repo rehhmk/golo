@@ -114,6 +114,11 @@ export interface EvaluationMetrics {
     count: number;
   }>;
   totalSnapshots: number;
+  /** Previsões cujo desfecho já é conhecido. Só estas foram medidas. */
+  resolvedCount: number;
+  /** Partidas distintas por trás das amostras — o tamanho efetivo da amostra,
+   *  já que todas as previsões de uma partida dividem um único desfecho. */
+  matchCount: number;
   dataQualityAvg: number;
   staleFeedPct: number;
   modelVersion: string;
