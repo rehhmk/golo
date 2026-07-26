@@ -3,12 +3,16 @@ package features
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/enzotriches/golo/internal/domain"
 )
 
-const FeatureSchemaVersion = "v1.0.0"
+const FeatureSchemaVersion = "v1.1.0"
+
+// regulationSeconds is 90 minutes, the denominator for normalised match time.
+const regulationSeconds = 5400.0
 
 // FeatureEngine builds point-in-time feature vectors from MatchState.
 type FeatureEngine struct{}
@@ -31,6 +35,26 @@ func (fe *FeatureEngine) ExtractFeatures(state domain.MatchState) (map[string]fl
 	feats["red_cards_home"] = float64(state.RedCards.Home)
 	feats["red_cards_away"] = float64(state.RedCards.Away)
 	feats["red_cards_diff"] = float64(state.RedCards.Home - state.RedCards.Away)
+
+	// Terms the trained hazard model consumes. Time enters as a fraction of
+	// regulation plus its square, because the measured goal intensity climbs
+	// steeply out of a cautious opening and then flattens — a shape a linear
+	// term cannot follow. The scoreline and card terms use magnitudes rather
+	// than signed differences: a two-goal gap raises the goal rate whichever
+	// side is ahead (2.37 goals/90 when level against 2.77 at two apart).
+	timeFrac := float64(state.ClockSeconds) / regulationSeconds
+	feats["match_time_frac"] = timeFrac
+	feats["match_time_frac_sq"] = timeFrac * timeFrac
+	feats["abs_score_diff"] = math.Abs(float64(state.Score.Home - state.Score.Away))
+	feats["goals_so_far"] = float64(state.Score.Home + state.Score.Away)
+	feats["abs_red_diff"] = math.Abs(float64(state.RedCards.Home - state.RedCards.Away))
+
+	// How much of the widest rolling window Golo has actually watched, from 0
+	// (just arrived, windows necessarily empty) to 1 (a full 10 minutes
+	// observed). Anything reading the activity windows must scale by this, or
+	// the empty windows at kickoff — and at the moment Golo picks up a match
+	// already in progress — look like an unusually dull passage of play.
+	feats["activity_coverage"] = observedFraction(state)
 
 	feats["yellow_cards_home"] = float64(state.YellowCards.Home)
 	feats["yellow_cards_away"] = float64(state.YellowCards.Away)
@@ -124,6 +148,22 @@ func (fe *FeatureEngine) ExtractFeatures(state domain.MatchState) (map[string]fl
 // same thing to a model whose widest window is ten minutes, so the feature
 // saturates there.
 const maxDeltaSeconds = 600.0
+
+// observedFraction reports how much of the widest rolling window is backed by
+// real observation.
+func observedFraction(state domain.MatchState) float64 {
+	if state.ObservedFromSecond < 0 {
+		return 0
+	}
+	observed := float64(state.ClockSeconds - state.ObservedFromSecond)
+	if observed <= 0 {
+		return 0
+	}
+	if observed >= maxDeltaSeconds {
+		return 1
+	}
+	return observed / maxDeltaSeconds
+}
 
 func (fe *FeatureEngine) deltaSec(current int, last *int) float64 {
 	if last == nil {

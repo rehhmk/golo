@@ -21,3 +21,5 @@ apps/web/.firebase/
 # Local machine/editor config
 .claude/settings.local.json
 .DS_Store
+ml/data/
+ml/.venv/

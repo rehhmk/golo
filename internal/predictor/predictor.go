@@ -135,12 +135,14 @@ func (p *Predictor) Predict(state domain.MatchState, feats map[string]float64, q
 	var p5m, p10m, pFT float64
 	if p.hazard != nil {
 		// The hazard model produces correctly ordered, time-aware horizons
-		// directly from a single intensity, so it needs no monotonicity fix-up.
-		lambda := p.hazard.intensity(feats)
+		// directly from one integrated intensity, so it needs no monotonicity
+		// fix-up: a longer window integrates strictly more of a positive
+		// intensity, and every window is capped at the time actually left.
+		now := float64(state.ClockSeconds)
 		remaining := remainingSeconds(state)
-		p5m = goalProbability(lambda, 300, remaining)
-		p10m = goalProbability(lambda, 600, remaining)
-		pFT = goalProbability(lambda, remaining, remaining)
+		p5m = p.hazard.goalProbability(feats, now, 300, remaining)
+		p10m = p.hazard.goalProbability(feats, now, 600, remaining)
+		pFT = p.hazard.goalProbability(feats, now, remaining, remaining)
 	} else {
 		p5m = p.evaluateHorizon("5m", feats)
 		p10m = p.evaluateHorizon("10m", feats)

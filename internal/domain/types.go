@@ -99,6 +99,14 @@ type MatchState struct {
 	// Versioning for deterministic replay comparison.
 	StateVersion int `json:"stateVersion"`
 
+	// ObservedFromSecond is the match clock at which Golo started watching,
+	// or -1 before the first observation. Rolling windows are empty until
+	// enough time has passed since then, and an empty window means "not
+	// observed yet", not "nothing happened" — consumers weighing activity
+	// need to tell those apart or they read the opening minutes of every
+	// match, and every match joined in progress, as unusually quiet.
+	ObservedFromSecond int `json:"observedFromSecond"`
+
 	// Timestamps of significant recent events (for temporal features).
 	LastGoalSecond      *int `json:"lastGoalSecond,omitempty"`
 	LastShotSecond      *int `json:"lastShotSecond,omitempty"`
@@ -289,6 +297,9 @@ func InitialState(match Match) MatchState {
 		CompetitionID: match.CompetitionID,
 		SeasonID:      match.SeasonID,
 		StateVersion:  0,
+
+		// Nothing observed yet; the first snapshot sets this.
+		ObservedFromSecond: -1,
 
 		HomeTeamName:    match.HomeTeamName,
 		AwayTeamName:    match.AwayTeamName,

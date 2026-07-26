@@ -82,8 +82,9 @@ func TestHazardFullTimeDecaysWithTime(t *testing.T) {
 func TestHazardRespondsToAttackingPressure(t *testing.T) {
 	p := hazardPredictor(t)
 
-	quiet := predictAt(t, p, 4200, map[string]float64{})
+	quiet := predictAt(t, p, 4200, map[string]float64{"activity_coverage": 1})
 	busy := predictAt(t, p, 4200, map[string]float64{
+		"activity_coverage":           1,
 		"shots_10m_total":             4,
 		"shots_on_target_10m_total":   2,
 		"corners_10m_total":           2,
@@ -146,6 +147,7 @@ func TestHazardMultiplierIsBounded(t *testing.T) {
 	p := hazardPredictor(t)
 
 	got := predictAt(t, p, 4200, map[string]float64{
+		"activity_coverage":           1,
 		"shots_10m_total":             500,
 		"shots_on_target_10m_total":   500,
 		"dangerous_attacks_10m_total": 5000,
@@ -154,9 +156,70 @@ func TestHazardMultiplierIsBounded(t *testing.T) {
 		t.Fatalf("unbounded intensity produced P5m = %v", got.GoalNext5m)
 	}
 
-	lambda := p.hazard.intensity(map[string]float64{"shots_10m_total": 1e6})
+	stateExp := p.hazard.stateExponent(map[string]float64{"activity_coverage": 1, "shots_10m_total": 1e6})
+	lambda := p.hazard.intensityAt(stateExp, 4200)
 	maxLambda := p.hazard.BaseGoalsPer90 / regulationSeconds * p.hazard.MaxMultiplier
 	if lambda > maxLambda*1.000001 {
 		t.Fatalf("intensity %v exceeded the capped maximum %v", lambda, maxLambda)
+	}
+}
+
+// Empty rolling windows mean "not observed yet", not "nothing is happening".
+// Without the coverage gate the centered activity terms read the opening
+// minutes of every match — and every match joined in progress — as unusually
+// dull, which knocked the kickoff full-time probability from 0.92 to 0.77.
+func TestActivityIsIgnoredUntilObserved(t *testing.T) {
+	p := hazardPredictor(t)
+
+	unobserved := predictAt(t, p, 0, map[string]float64{"activity_coverage": 0})
+	observedQuiet := predictAt(t, p, 0, map[string]float64{"activity_coverage": 1})
+
+	if !(unobserved.GoalBeforeFullTime > observedQuiet.GoalBeforeFullTime) {
+		t.Fatalf("a genuinely quiet observed match should rate below an unobserved one: %v vs %v",
+			observedQuiet.GoalBeforeFullTime, unobserved.GoalBeforeFullTime)
+	}
+	if unobserved.GoalBeforeFullTime < 0.88 {
+		t.Fatalf("kickoff with no observation yet = %v, want the unpenalised base rate", unobserved.GoalBeforeFullTime)
+	}
+}
+
+// The intensity rises through a match, so a long horizon must integrate it
+// rather than extrapolate the current instant flat to the whistle.
+func TestExpectedGoalsIntegratesRisingIntensity(t *testing.T) {
+	p := hazardPredictor(t)
+	feats := map[string]float64{"activity_coverage": 0}
+
+	// A full match's worth of expected goals should land near the observed
+	// average of roughly 2.7 per match.
+	total := p.hazard.expectedGoals(feats, 0, 5640)
+	if total < 2.3 || total > 3.1 {
+		t.Fatalf("expected goals over a whole match = %.3f, want roughly the observed 2.7", total)
+	}
+
+	// Held flat at the kickoff intensity the same window would fall short,
+	// which is precisely the bug this replaced.
+	flat := p.hazard.intensityAt(p.hazard.stateExponent(feats), 0) * 5640
+	if flat >= total {
+		t.Fatalf("flat extrapolation %.3f should undershoot the integral %.3f", flat, total)
+	}
+}
+
+// Guards the artifact against being replaced by one that was never fitted.
+func TestArtifactIsTrained(t *testing.T) {
+	p := hazardPredictor(t)
+
+	if p.hazard.TrainingCount < 500 {
+		t.Fatalf("artifact reports %d training matches, want a real fitted model", p.hazard.TrainingCount)
+	}
+	for _, name := range []string{"match_time_frac", "match_time_frac_sq", "abs_score_diff"} {
+		if p.hazard.Coefficients[name] == 0 {
+			t.Errorf("coefficient %s is exactly zero — the fit degenerated to intercept-only", name)
+		}
+	}
+	// The opening of a match is measurably quieter than the hour mark; the
+	// fitted time terms must reproduce that ordering.
+	stateExp := p.hazard.stateExponent(map[string]float64{})
+	if p.hazard.intensityAt(stateExp, 0) >= p.hazard.intensityAt(stateExp, 3600) {
+		t.Error("fitted intensity does not rise from kickoff to the hour mark")
 	}
 }

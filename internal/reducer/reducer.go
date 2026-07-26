@@ -178,6 +178,11 @@ func (r *Reducer) ApplySnapshot(state domain.MatchState, snap domain.LiveSnapsho
 	if snap.ClockSeconds > newState.ClockSeconds {
 		newState.ClockSeconds = snap.ClockSeconds
 	}
+	// Record where observation began, so consumers can tell an empty rolling
+	// window caused by a quiet match from one caused by having just arrived.
+	if newState.ObservedFromSecond < 0 {
+		newState.ObservedFromSecond = snap.ClockSeconds
+	}
 	if snap.Period > newState.Period {
 		newState.Period = snap.Period
 	}
