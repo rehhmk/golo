@@ -1,10 +1,35 @@
 package predictor
 
 import (
+	"crypto/sha256"
+	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/enzotriches/golo/internal/domain"
 )
+
+func TestPredictorHashesExactArtifactBytes(t *testing.T) {
+	raw := []byte(`{
+		"modelVersion":"hazard-test","featureVersion":"features-test",
+		"modelType":"poisson_hazard","baseGoalsPer90":2.5,
+		"coefficients":{},"activityCoefficients":{},"activityCenters":{},
+		"sha256":"embedded-value"
+	}`)
+	path := filepath.Join(t.TempDir(), "model.json")
+	if err := os.WriteFile(path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	predictor, err := NewPredictor(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := fmt.Sprintf("%x", sha256.Sum256(raw))
+	if predictor.SHA256() != want {
+		t.Fatalf("artifact hash=%s want exact-file hash=%s", predictor.SHA256(), want)
+	}
+}
 
 func TestPredictor_Predict(t *testing.T) {
 	artifact := MultiHorizonArtifact{

@@ -123,6 +123,7 @@ def build_slices(matches):
                     "fixture_id": m["fixture_id"],
                     "league_id": m["league_id"],
                     "season": m["season"],
+                    "starting_at": m.get("starting_at") or "",
                     "t": t,
                     "end_second": end,
                     "exposure": exposure,
@@ -173,11 +174,33 @@ def add_horizon_labels(df, matches):
     return df
 
 
-def holdout_split(df):
-    """Hold out the most recent season of each league."""
-    latest = df.groupby("league_id")["season"].max().to_dict()
-    is_test = df.apply(lambda r: r["season"] == latest[r["league_id"]], axis=1)
-    return df[~is_test].copy(), df[is_test].copy(), latest
+def training_validation_split(df):
+    """Use the season with the latest actual kickoff in each league as
+    Validation. Season labels are not chronologically comparable across
+    competitions (e.g. "2026" versus "2026/2027"). Leagues with only one
+    season cannot support an honest chronological comparison and are
+    excluded from qualification."""
+    season_dates = (
+        df.groupby(["league_id", "season"])["starting_at"].max().reset_index()
+    )
+    season_counts = season_dates.groupby("league_id")["season"].nunique()
+    eligible = set(season_counts[season_counts >= 2].index)
+    excluded = sorted(set(season_counts.index) - eligible)
+    season_dates = season_dates[season_dates["league_id"].isin(eligible)]
+    newest_rows = season_dates.sort_values(
+        ["league_id", "starting_at", "season"]
+    ).groupby("league_id").tail(1)
+    latest = dict(zip(newest_rows["league_id"], newest_rows["season"]))
+    eligible_rows = df[df["league_id"].isin(eligible)].copy()
+    is_validation = eligible_rows.apply(
+        lambda r: r["season"] == latest[r["league_id"]], axis=1
+    )
+    return (
+        eligible_rows[~is_validation].copy(),
+        eligible_rows[is_validation].copy(),
+        latest,
+        excluded,
+    )
 
 
 class FittedHazard:
@@ -317,9 +340,10 @@ def main():
             df[feature] = df[feature] - centers[feature]
     print(f"built {len(df)} one-minute slices")
 
-    df_train, df_test, latest = holdout_split(df)
-    print(f"train {len(df_train)} slices / test {len(df_test)} slices")
-    print(f"held out seasons: {latest}")
+    df_train, df_validation, latest, excluded = training_validation_split(df)
+    print(f"train {len(df_train)} slices / validation {len(df_validation)} slices")
+    print(f"validation seasons: {latest}")
+    print(f"excluded single-season leagues: {excluded}")
 
     model = fit(df_train, activity_features)
     coefs = model.coefficients
@@ -330,13 +354,14 @@ def main():
     for name, value in coefs.items():
         print(f"  {name:18s} {value:+.8f}")
 
-    fitted_probs, lam = probabilities(model, df_test)
-    const_probs, const_lam = constant_rate_baseline(df_train, df_test)
+    fitted_probs, lam = probabilities(model, df_validation)
+    const_probs, const_lam = constant_rate_baseline(df_train, df_validation)
 
     report = ["# Hazard model v1 — training report", ""]
     report.append(f"- Matches: {len(matches)} ({df['fixture_id'].nunique()} distinct)")
-    report.append(f"- Slices: {len(df)} ({len(df_train)} train / {len(df_test)} test)")
-    report.append(f"- Held-out seasons: {latest}")
+    report.append(f"- Slices: {len(df)} ({len(df_train)} training / {len(df_validation)} validation)")
+    report.append(f"- Validation seasons: {latest}")
+    report.append(f"- Excluded single-season leagues: {excluded}")
     report.append(f"- Observed goals per match: {sum(len(m['goals']) for m in matches)/len(matches):.3f}")
     report.append(f"- Constant-rate baseline: {const_lam*REGULATION_SECONDS:.3f} goals/90min")
     report.append(f"- Fitted base rate at reference state: {base_goals_per_90:.3f} goals/90min")
@@ -348,7 +373,7 @@ def main():
     for name, value in coefs.items():
         report.append(f"| {name} | {value:+.8f} |")
     report.append("")
-    report.append("## Held-out performance")
+    report.append("## Validation performance")
     report.append("")
     report.append("| horizon | model | Brier | LogLoss | ECE | mean pred | base rate |")
     report.append("|---|---|---|---|---|---|---|")
@@ -362,7 +387,7 @@ def main():
         ("ft", "label_ft"),
         ("two_ft", "label_two_ft"),
     ):
-        labels = df_test[label_col].to_numpy(dtype=float)
+        labels = df_validation[label_col].to_numpy(dtype=float)
         m_fit = metrics(fitted_probs[key], labels)
         m_const = metrics(const_probs[key], labels)
         summary[key] = {"fitted": m_fit, "constant": m_const}
@@ -373,9 +398,9 @@ def main():
             )
 
     report.append("")
-    report.append("## Reliability — goal before full time (held out)")
+    report.append("## Reliability — goal before full time (validation)")
     report.append("")
-    report.append(reliability_table(fitted_probs["ft"], df_test["label_ft"].to_numpy(dtype=float)))
+    report.append(reliability_table(fitted_probs["ft"], df_validation["label_ft"].to_numpy(dtype=float)))
 
     # Validation above is what the reported metrics describe. The artifact
     # itself is refitted on every season including the held-out one: holding
@@ -393,7 +418,7 @@ def main():
     report.append("## Shipped artifact")
     report.append("")
     report.append(
-        f"Validation used a held-out season; the exported artifact is refitted on all "
+        f"Validation used the newest already-inspected season; the exported artifact is refitted on all "
         f"{len(df)} slices from {len(matches)} matches. Base rate {final_base:.4f} goals/90 "
         f"at the reference state (kickoff, level, no red cards)."
     )
@@ -403,7 +428,7 @@ def main():
     for name, value in final_coefs.items():
         report.append(f"| {name} | {value:+.8f} |")
 
-    holdout_matches = int(df_test["fixture_id"].nunique())
+    validation_matches = int(df_validation["fixture_id"].nunique())
     one_qualified = summary["ft"]["fitted"]["brier"] < summary["ft"]["constant"]["brier"]
     two_qualified = summary["two_ft"]["fitted"]["brier"] < summary["two_ft"]["constant"]["brier"]
     competition_rates = {}
@@ -449,7 +474,9 @@ def main():
         "trainedUntil": max(m["starting_at"] or "" for m in matches)[:10],
         "trainingMatches": len(modeling_matches),
         "validation": {
-            "holdoutMatches": holdout_matches,
+            "validationMatches": validation_matches,
+            "holdoutMatches": validation_matches,
+            "baselineGoalsPer90": round(float(const_lam) * REGULATION_SECONDS, 8),
             "oneGoalBrier": round(summary["ft"]["fitted"]["brier"], 8),
             "oneGoalBaselineBrier": round(summary["ft"]["constant"]["brier"], 8),
             "twoGoalBrier": round(summary["two_ft"]["fitted"]["brier"], 8),
@@ -459,7 +486,7 @@ def main():
         },
         "notes": (
             "Base rate and the match_second / abs_score_diff / goals_so_far / red-card terms are "
-            "fitted by Poisson regression on {n} historical matches, validated on a held-out most-recent "
+            "fitted by Poisson regression on {n} historical matches, validated on the already-inspected most-recent "
             "season per league. {activity_note} Activity values are centered so ordinary activity leaves "
             "the fitted intensity unchanged. xG remains zero when unavailable."
         ).format(n=len(modeling_matches), activity_note=activity_note),

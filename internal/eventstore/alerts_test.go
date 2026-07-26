@@ -1,6 +1,7 @@
 package eventstore
 
 import (
+	"encoding/json"
 	"path/filepath"
 	"testing"
 	"time"
@@ -22,21 +23,41 @@ func TestStrategyArmingRequiresQualification(t *testing.T) {
 	if err := store.SaveStrategy(row); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SetStrategyArmed("s", 1, true); err == nil {
+	if err := store.SetStrategyArmed("s", 1, true, "model-sha"); err == nil {
 		t.Fatal("unqualified strategy was armed")
 	}
 	row.Report.Qualified = true
+	row.Report.ValidationQualified = true
+	row.Report.ModelValidationQualified = true
 	if err := store.SaveStrategy(row); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SetStrategyArmed("s", 1, true); err != nil {
+	contract, _ := json.Marshal(signals.LockedTestContract{Model: signals.ModelContract{ModelSHA256: "model-sha"}})
+	now := time.Now()
+	if _, err := store.db.Exec(`INSERT INTO strategy_locked_tests
+		(id, strategy_id, strategy_version, state, contract_json, contract_sha256,
+		 validation_report_json, started_at, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"lock-1", "s", 1, signals.LockedStateRevealedPass, string(contract), "contract",
+		`{"qualified":true}`, now, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetStrategyArmed("s", 1, true, "model-sha"); err != nil {
 		t.Fatalf("qualified strategy did not arm: %v", err)
 	}
 	row.Definition.Version = 2
 	if err := store.SaveStrategy(row); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SetStrategyArmed("s", 2, true); err != nil {
+	if _, err := store.db.Exec(`INSERT INTO strategy_locked_tests
+		(id, strategy_id, strategy_version, state, contract_json, contract_sha256,
+		 validation_report_json, started_at, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"lock-2", "s", 2, signals.LockedStateRevealedPass, string(contract), "contract",
+		`{"qualified":true}`, now, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetStrategyArmed("s", 2, true, "model-sha"); err != nil {
 		t.Fatal(err)
 	}
 	armed, err := store.ListArmedStrategies()

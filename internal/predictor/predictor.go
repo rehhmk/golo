@@ -1,6 +1,7 @@
 package predictor
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -63,11 +64,13 @@ func NewPredictor(artifactPath string) (*Predictor, error) {
 		if hazard.BaseGoalsPer90 <= 0 {
 			return nil, fmt.Errorf("hazard model artifact has non-positive baseGoalsPer90 %v", hazard.BaseGoalsPer90)
 		}
+		artifactSHA256 := fmt.Sprintf("%x", sha256.Sum256(data))
 		return &Predictor{
 			artifact: MultiHorizonArtifact{
 				ModelVersion:   hazard.ModelVersion,
 				FeatureVersion: hazard.FeatureVersion,
 				TrainedUntil:   hazard.TrainedUntil,
+				SHA256:         artifactSHA256,
 			},
 			calibrator: calibration.NewCalibrator(),
 			hazard:     &hazard,
@@ -78,6 +81,7 @@ func NewPredictor(artifactPath string) (*Predictor, error) {
 	if err := json.Unmarshal(data, &artifact); err != nil {
 		return nil, fmt.Errorf("failed to parse model artifact JSON: %w", err)
 	}
+	artifact.SHA256 = fmt.Sprintf("%x", sha256.Sum256(data))
 
 	return &Predictor{
 		artifact:   artifact,
@@ -92,6 +96,7 @@ func NewPredictorFromHazard(hazard HazardArtifact) *Predictor {
 		artifact: MultiHorizonArtifact{
 			ModelVersion:   hazard.ModelVersion,
 			FeatureVersion: hazard.FeatureVersion,
+			SHA256:         hazard.SHA256,
 		},
 		calibrator: calibration.NewCalibrator(),
 		hazard:     &hazard,
@@ -235,12 +240,37 @@ func (p *Predictor) ModelVersion() string {
 	return p.artifact.ModelVersion
 }
 
+func (p *Predictor) FeatureVersion() string { return p.artifact.FeatureVersion }
+
+func (p *Predictor) SHA256() string { return p.artifact.SHA256 }
+
+func (p *Predictor) BaselineGoalsPer90() float64 {
+	if p.hazard == nil {
+		return 0
+	}
+	if p.hazard.Validation.BaselineGoalsPer90 > 0 {
+		return p.hazard.Validation.BaselineGoalsPer90
+	}
+	return p.hazard.BaseGoalsPer90
+}
+
+// BaselineProbability returns the frozen constant-rate comparator for the
+// exact state and target recorded in a prospective occurrence.
+func (p *Predictor) BaselineProbability(state domain.MatchState, additionalGoals int) float64 {
+	rate := p.BaselineGoalsPer90()
+	if rate <= 0 {
+		return 0
+	}
+	expected := rate / regulationSeconds * remainingSeconds(state)
+	return roundProb(atLeastGoalsProbability(expected, additionalGoals))
+}
+
 // AlertQualified is deliberately target-specific and artifact-driven. A
 // missing validation block is false, so an older model can never silently
 // power commercial alerts. Qualifying one-more-goal does not implicitly
 // qualify the materially harder two-more-goals market.
 func (p *Predictor) AlertQualified(additionalGoals int) bool {
-	if p.hazard == nil || p.hazard.Validation.HoldoutMatches < 500 {
+	if p.hazard == nil || p.hazard.Validation.matchCount() < 500 {
 		return false
 	}
 	if additionalGoals == 1 {

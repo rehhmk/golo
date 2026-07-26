@@ -52,11 +52,14 @@ type queryer interface {
 }
 
 func listStrategies(db queryer, armedOnly bool) ([]signals.StoredStrategy, error) {
-	query := `SELECT definition_json, report_json, armed, created_at, updated_at FROM strategies`
+	query := `SELECT s.definition_json, s.report_json, s.armed, s.created_at, s.updated_at,
+		COALESCE(t.id, ''), COALESCE(t.state, '')
+		FROM strategies s
+		LEFT JOIN strategy_locked_tests t ON t.strategy_id=s.id AND t.strategy_version=s.version`
 	if armedOnly {
-		query += ` WHERE armed=1`
+		query += ` WHERE s.armed=1`
 	}
-	query += ` ORDER BY updated_at DESC`
+	query += ` ORDER BY s.updated_at DESC`
 	rows, err := db.Query(query)
 	if err != nil {
 		return nil, err
@@ -66,7 +69,8 @@ func listStrategies(db queryer, armedOnly bool) ([]signals.StoredStrategy, error
 	for rows.Next() {
 		var strategy signals.StoredStrategy
 		var definition, report string
-		if err := rows.Scan(&definition, &report, &strategy.Armed, &strategy.CreatedAt, &strategy.UpdatedAt); err != nil {
+		if err := rows.Scan(&definition, &report, &strategy.Armed, &strategy.CreatedAt, &strategy.UpdatedAt,
+			&strategy.LockedTestID, &strategy.LockedTestState); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal([]byte(definition), &strategy.Definition); err != nil {
@@ -75,12 +79,18 @@ func listStrategies(db queryer, armedOnly bool) ([]signals.StoredStrategy, error
 		if err := json.Unmarshal([]byte(report), &strategy.Report); err != nil {
 			return nil, err
 		}
+		if strategy.LockedTestState == "" {
+			strategy.LockedTestState = signals.LockedStateDraft
+			if strategy.Report.ValidationQualified && strategy.Report.ModelValidationQualified {
+				strategy.LockedTestState = signals.LockedStateValidated
+			}
+		}
 		out = append(out, strategy)
 	}
 	return out, rows.Err()
 }
 
-func (s *SQLiteStore) SetStrategyArmed(id string, version int, armed bool) error {
+func (s *SQLiteStore) SetStrategyArmed(id string, version int, armed bool, currentModelSHA256 string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	tx, err := s.db.Begin()
@@ -101,6 +111,21 @@ func (s *SQLiteStore) SetStrategyArmed(id string, version int, armed bool) error
 		}
 		if !parsed.Qualified {
 			return fmt.Errorf("strategy has not passed qualification")
+		}
+		var lockedState, contract string
+		if err := tx.QueryRow(`SELECT state, contract_json FROM strategy_locked_tests WHERE strategy_id=? AND strategy_version=?`,
+			id, version).Scan(&lockedState, &contract); err != nil {
+			return fmt.Errorf("strategy has no revealed locked test: %w", err)
+		}
+		if signals.LockedTestState(lockedState) != signals.LockedStateRevealedPass {
+			return fmt.Errorf("strategy locked test has not passed")
+		}
+		var parsedContract signals.LockedTestContract
+		if err := json.Unmarshal([]byte(contract), &parsedContract); err != nil {
+			return err
+		}
+		if currentModelSHA256 == "" || parsedContract.Model.ModelSHA256 != currentModelSHA256 {
+			return fmt.Errorf("loaded model does not match sealed model")
 		}
 		// Only one immutable version of a strategy may be live. Otherwise an
 		// edit could send two alerts for the same market under two versions.

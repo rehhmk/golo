@@ -32,7 +32,9 @@ SportMonks scopes which leagues are fetchable at the account/plan level (you pic
 
 Copy the beta settings from `.env.example`, configure a bcrypt admin hash and a 32+ character session secret, then open **Strategy Lab**. Strategy edits are immutable versions and may only be armed after all chronological evidence gates pass.
 
-The shipped `hazard_v1.2.0` artifact was evaluated against a constant-rate baseline on newest-season holdouts. It currently does **not** beat that baseline for either one or two remaining goals, so `model_qualified` rejects every alert. This is deliberate. Rebuild timestamped activity timelines and retrain before considering delivery:
+Historical data is split deterministically per competition: older seasons are **Training**, and the newest season by actual kickoff date is **Validation**. Single-season competitions are reported and excluded from qualification. A validated strategy must then be sealed and collect two prospective **Locked Test** cohorts of 150 non-void independent matches. Results remain hidden until both cohorts complete and the administrator irreversibly reveals the fixed report.
+
+The shipped `hazard_v1.2.0` artifact is evaluated against a frozen constant-rate baseline on Validation. It currently does **not** beat that baseline for either one or two remaining goals, so `model_qualified` rejects every alert. This is deliberate. Rebuild timestamped activity timelines and retrain before considering delivery:
 
 ```bash
 ml/.venv/bin/python ml/src/build_dataset.py
@@ -42,9 +44,11 @@ ml/.venv/bin/python ml/src/train_baseline.py
 Use The Odds API only in shadow mode on a development/free plan. Golo uses
 the quota-free event list first and requests odds plus scores only while a
 target competition is live. Before accepting payment, verify commercial usage
-and deep-link authorization, select adequate request capacity, then explicitly
-set `ALERT_ENGINE_ENABLED=true`. The “two more goals” market also requires its
-own model qualification and the separate dashboard switch.
+and deep-link authorization and select adequate request capacity. Runtime
+delivery switches do not bypass model Validation, sealed Locked Test, Wilson,
+price, freshness, data-quality, or deduplication gates. The “two more goals”
+market also requires its own model qualification and the separate dashboard
+switch.
 
 Telegram enrollment is one-time-code based. A user sends `/start CODE`, confirms 18+ and the beta terms, and receives the same centrally armed strategies until their manually managed expiry. Every qualified entry is retained with its offered price, model/market probability, evidence, and gate decisions; every win, loss, or void is forwarded.
 

@@ -11,11 +11,45 @@ import (
 )
 
 type memoryStore struct {
-	strategies []StoredStrategy
-	decisions  map[string]Decision
+	strategies        []StoredStrategy
+	decisions         map[string]Decision
+	lockedTests       []LockedTest
+	lockedOccurrences map[string]LockedOccurrence
 }
 
-func (s *memoryStore) ListArmedStrategies() ([]StoredStrategy, error) { return s.strategies, nil }
+func (s *memoryStore) ListArmedStrategies() ([]StoredStrategy, error)   { return s.strategies, nil }
+func (s *memoryStore) ListCollectingLockedTests() ([]LockedTest, error) { return s.lockedTests, nil }
+func (s *memoryStore) AdmitLockedOccurrence(occurrence LockedOccurrence) (bool, error) {
+	if s.lockedOccurrences == nil {
+		s.lockedOccurrences = map[string]LockedOccurrence{}
+	}
+	key := occurrence.TestID + ":" + occurrence.MatchID
+	if _, exists := s.lockedOccurrences[key]; exists {
+		return false, nil
+	}
+	occurrence.RuleCohort = true
+	occurrence.SignalCohort = occurrence.SignalEligible
+	s.lockedOccurrences[key] = occurrence
+	return true, nil
+}
+func (s *memoryStore) ListOpenLockedOccurrencesForMatch(matchID string) ([]LockedOccurrence, error) {
+	out := make([]LockedOccurrence, 0)
+	for _, occurrence := range s.lockedOccurrences {
+		if occurrence.MatchID == matchID && occurrence.Status == LockedOccurrenceOpen {
+			out = append(out, occurrence)
+		}
+	}
+	return out, nil
+}
+func (s *memoryStore) UpdateLockedOccurrenceStatus(id string, status LockedOccurrenceStatus, at time.Time) error {
+	for key, occurrence := range s.lockedOccurrences {
+		if occurrence.ID == id {
+			occurrence.Status, occurrence.ResolvedAt = status, &at
+			s.lockedOccurrences[key] = occurrence
+		}
+	}
+	return nil
+}
 func (s *memoryStore) SaveSignalDecision(d Decision) error {
 	if s.decisions == nil {
 		s.decisions = map[string]Decision{}
@@ -58,8 +92,9 @@ func testStrategy() StoredStrategy {
 	return StoredStrategy{
 		Definition: def, Armed: true,
 		Report: scenario.QualificationReport{
-			Qualified: true,
-			Holdout:   scenario.Result{MatchCount: 200, HitRate: .75, RateLow: .68, RateHigh: .80, OddsHigh: 1.47},
+			Qualified: true, ValidationQualified: true, ModelValidationQualified: true,
+			Validation: scenario.Result{MatchCount: 200, HitRate: .75, RateLow: .68, RateHigh: .80, OddsHigh: 1.47},
+			Holdout:    scenario.Result{MatchCount: 200, HitRate: .75, RateLow: .68, RateHigh: .80, OddsHigh: 1.47},
 		},
 	}
 }
@@ -88,7 +123,7 @@ func TestEngineAppliesAllGatesAndDeduplicates(t *testing.T) {
 	notifier := &memoryNotifier{}
 	settings := DefaultSettings()
 	settings.AlertEngineEnabled, settings.TelegramEnabled = true, true
-	engine := NewEngine(store, notifier, settings, map[int]bool{1: true}, true, true)
+	engine := NewEngine(store, notifier, settings, map[int]bool{1: true}, ModelContract{}, nil, true, true)
 	engine.now = func() time.Time { return now }
 	match, state, prediction, event := testSignalInput(now)
 
@@ -130,7 +165,7 @@ func TestEngineRejectsStaleScoreAndPostGoalQuote(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			store := &memoryStore{strategies: []StoredStrategy{testStrategy()}}
-			engine := NewEngine(store, nil, DefaultSettings(), map[int]bool{1: true}, false, false)
+			engine := NewEngine(store, nil, DefaultSettings(), map[int]bool{1: true}, ModelContract{}, nil, false, false)
 			engine.now = func() time.Time { return now }
 			match, state, prediction, event := testSignalInput(now)
 			mutate(&state, &event)
@@ -153,7 +188,7 @@ func TestSettlementAndFlatStakePerformance(t *testing.T) {
 	notifier := &memoryNotifier{}
 	settings := DefaultSettings()
 	settings.TelegramEnabled = true
-	engine := NewEngine(store, notifier, settings, nil, false, true)
+	engine := NewEngine(store, notifier, settings, nil, ModelContract{}, nil, false, true)
 	if err := engine.Settle(context.Background(), domain.MatchState{
 		MatchID: "m1", Status: domain.MatchStatusLive, Score: domain.ScoreState{Home: 2, Away: 1},
 	}); err != nil {
@@ -176,7 +211,7 @@ func TestCancelledMatchSettlesVoid(t *testing.T) {
 	store := &memoryStore{decisions: map[string]Decision{
 		"one": {ID: "s1", DedupKey: "one", MatchID: "m1", Status: StatusQualified, StartGoals: 2, AdditionalGoals: 1},
 	}}
-	engine := NewEngine(store, nil, DefaultSettings(), nil, false, false)
+	engine := NewEngine(store, nil, DefaultSettings(), nil, ModelContract{}, nil, false, false)
 	if err := engine.Settle(context.Background(), domain.MatchState{
 		MatchID: "m1", Status: domain.MatchStatusCancelled, Score: domain.ScoreState{Home: 1, Away: 1},
 	}); err != nil {
@@ -184,5 +219,63 @@ func TestCancelledMatchSettlesVoid(t *testing.T) {
 	}
 	if store.decisions["one"].Status != StatusVoid {
 		t.Fatalf("cancelled match settled as %s", store.decisions["one"].Status)
+	}
+}
+
+func TestLockedCollectionRunsWithoutArmingAndUsesSealedGates(t *testing.T) {
+	now := time.Date(2026, 7, 26, 20, 0, 0, 0, time.UTC)
+	model := ModelContract{
+		ModelVersion: "model-v1", ModelSHA256: "sha-v1",
+		FeatureVersion: "features-v1", OneGoalQualified: true,
+	}
+	strategy := testStrategy()
+	strategy.Definition.Enabled = true
+	locked := LockedTest{
+		ID: "lock-1", StrategyID: strategy.Definition.ID,
+		StrategyVersion: strategy.Definition.Version, State: LockedStateCollecting,
+		Contract: LockedTestContract{
+			Definition: strategy.Definition, Model: model, Bookmaker: "Bet365",
+			MinimumDataQuality: .85, MaximumFeedLag: 15 * time.Second,
+			MaximumQuoteAge: 30 * time.Second, PostGoalCooldown: time.Minute,
+			TargetOccurrences: LockedCohortTarget,
+		},
+		ValidationReport: strategy.Report, StartedAt: now.Add(-time.Hour),
+	}
+	store := &memoryStore{lockedTests: []LockedTest{locked}}
+	settings := DefaultSettings()
+	settings.MinimumDataQuality = .99 // Must not alter the already sealed test.
+	engine := NewEngine(store, nil, settings, map[int]bool{1: true}, model,
+		func(domain.MatchState, int) float64 { return .50 }, true, true)
+	engine.now = func() time.Time { return now }
+
+	match, state, prediction, event := testSignalInput(now)
+	prediction.ModelVersion = model.ModelVersion
+	prediction.FeatureVersion = model.FeatureVersion
+	if err := engine.Evaluate(context.Background(), match, state, prediction, odds.Event{}); err != nil {
+		t.Fatal(err)
+	}
+	ruleOnly := store.lockedOccurrences["lock-1:m1"]
+	if !ruleOnly.RuleCohort || ruleOnly.SignalCohort || ruleOnly.SignalEligible {
+		t.Fatalf("missing odds should collect rule only: %+v", ruleOnly)
+	}
+
+	match.ID, state.MatchID = "m2", "m2"
+	if err := engine.Evaluate(context.Background(), match, state, prediction, event); err != nil {
+		t.Fatal(err)
+	}
+	fullSignal := store.lockedOccurrences["lock-1:m2"]
+	if !fullSignal.RuleCohort || !fullSignal.SignalCohort || !fullSignal.SignalEligible {
+		t.Fatalf("sealed data-quality threshold was not used: failures=%v", fullSignal.GateFailures)
+	}
+	if fullSignal.BaselineProbability != .50 {
+		t.Fatalf("baseline was not frozen into occurrence: %+v", fullSignal)
+	}
+
+	state.Score.Home++
+	if err := engine.Settle(context.Background(), state); err != nil {
+		t.Fatal(err)
+	}
+	if store.lockedOccurrences["lock-1:m2"].Status != LockedOccurrenceWon {
+		t.Fatal("locked occurrence did not settle immediately on target goal")
 	}
 }

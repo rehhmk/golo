@@ -67,16 +67,26 @@ type HazardArtifact struct {
 	TrainingCount int              `json:"trainingMatches"`
 	Notes         string           `json:"notes"`
 	Validation    HazardValidation `json:"validation"`
+	SHA256        string           `json:"sha256"`
 }
 
 type HazardValidation struct {
+	ValidationMatches    int     `json:"validationMatches"`
 	HoldoutMatches       int     `json:"holdoutMatches"`
+	BaselineGoalsPer90   float64 `json:"baselineGoalsPer90"`
 	OneGoalBrier         float64 `json:"oneGoalBrier"`
 	OneGoalBaselineBrier float64 `json:"oneGoalBaselineBrier"`
 	TwoGoalBrier         float64 `json:"twoGoalBrier"`
 	TwoGoalBaselineBrier float64 `json:"twoGoalBaselineBrier"`
 	OneGoalQualified     bool    `json:"oneGoalQualified"`
 	TwoGoalQualified     bool    `json:"twoGoalQualified"`
+}
+
+func (v HazardValidation) matchCount() int {
+	if v.ValidationMatches > 0 {
+		return v.ValidationMatches
+	}
+	return v.HoldoutMatches
 }
 
 // remainingSeconds estimates how much play is left, which is what every

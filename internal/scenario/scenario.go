@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"time"
 )
 
 // MatchTimeline is one historical match reduced to what a scenario needs:
@@ -27,6 +28,7 @@ type MatchTimeline struct {
 	MatchID       string
 	CompetitionID string
 	Season        string
+	StartingAt    time.Time
 	EndSecond     int
 	Goals         []Goal
 	RedCards      []RedCard
@@ -90,30 +92,30 @@ type Occurrence struct {
 
 // Result is everything measured for one scenario.
 type Result struct {
-	Scenario    Scenario
-	Occurrences int
-	Wins        int
+	Scenario    Scenario `json:"scenario"`
+	Occurrences int      `json:"occurrences"`
+	Wins        int      `json:"wins"`
 
-	HitRate float64
+	HitRate float64 `json:"hitRate"`
 	// RateLow and RateHigh bound the true hit rate at 95% confidence.
-	RateLow  float64
-	RateHigh float64
+	RateLow  float64 `json:"rateLow"`
+	RateHigh float64 `json:"rateHigh"`
 
 	// BreakEvenOdds is 1/HitRate: below this price the bet loses money over
 	// time. OddsHigh is the pessimistic bound — derived from RateLow, it is
 	// the price you would need if the true rate sits at the unlucky end of
 	// the interval, and it is the number a cautious reader should use.
-	BreakEvenOdds float64
-	OddsLow       float64
-	OddsHigh      float64
+	BreakEvenOdds float64 `json:"breakEvenOdds"`
+	OddsLow       float64 `json:"oddsLow"`
+	OddsHigh      float64 `json:"oddsHigh"`
 
 	// LongestLossStreak is observed, not estimated from the hit rate.
-	LongestLossStreak int
+	LongestLossStreak int `json:"longestLossStreak"`
 
 	// MatchCount equals Occurrences by construction — one observation per
 	// match — and is kept explicit so the reader can see that the sample size
 	// is a count of independent matches rather than of trigger firings.
-	MatchCount int
+	MatchCount int `json:"matchCount"`
 }
 
 // Evaluate runs a scenario across a set of match timelines, recording one
@@ -181,6 +183,29 @@ func Evaluate(sc Scenario, matches []MatchTimeline) Result {
 	result.OddsHigh = oddsFor(result.RateLow)
 	result.LongestLossStreak = longestLossStreak(occurrences)
 
+	return result
+}
+
+// ResultFromOutcomes constructs the same auditable summary used by historical
+// backtests from already-settled prospective outcomes.
+func ResultFromOutcomes(sc Scenario, outcomes []Occurrence) Result {
+	result := Result{
+		Scenario: sc, Occurrences: len(outcomes), MatchCount: len(outcomes),
+	}
+	for _, outcome := range outcomes {
+		if outcome.Won {
+			result.Wins++
+		}
+	}
+	if result.Occurrences == 0 {
+		return result
+	}
+	result.HitRate = float64(result.Wins) / float64(result.Occurrences)
+	result.RateLow, result.RateHigh = wilsonInterval(result.Wins, result.Occurrences)
+	result.BreakEvenOdds = oddsFor(result.HitRate)
+	result.OddsLow = oddsFor(result.RateHigh)
+	result.OddsHigh = oddsFor(result.RateLow)
+	result.LongestLossStreak = longestLossStreak(outcomes)
 	return result
 }
 
