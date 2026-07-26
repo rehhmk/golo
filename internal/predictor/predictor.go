@@ -132,7 +132,8 @@ func (p *Predictor) Predict(state domain.MatchState, feats map[string]float64, q
 		}, nil
 	}
 
-	var p5m, p10m, pFT float64
+	var p5m, p10m, pFT, pTwo, expectedRemaining float64
+	var contributions []domain.FeatureContribution
 	if p.hazard != nil {
 		// The hazard model produces correctly ordered, time-aware horizons
 		// directly from one integrated intensity, so it needs no monotonicity
@@ -140,9 +141,12 @@ func (p *Predictor) Predict(state domain.MatchState, feats map[string]float64, q
 		// intensity, and every window is capped at the time actually left.
 		now := float64(state.ClockSeconds)
 		remaining := remainingSeconds(state)
-		p5m = p.hazard.goalProbability(feats, now, 300, remaining)
-		p10m = p.hazard.goalProbability(feats, now, 600, remaining)
-		pFT = p.hazard.goalProbability(feats, now, remaining, remaining)
+		p5m = p.hazard.goalProbabilityForCompetition(feats, state.CompetitionID, now, 300, remaining)
+		p10m = p.hazard.goalProbabilityForCompetition(feats, state.CompetitionID, now, 600, remaining)
+		expectedRemaining = p.hazard.expectedGoalsForCompetition(feats, state.CompetitionID, now, remaining)
+		pFT = atLeastGoalsProbability(expectedRemaining, 1)
+		pTwo = atLeastGoalsProbability(expectedRemaining, 2)
+		_, contributions = p.hazard.stateExplanation(feats)
 	} else {
 		p5m = p.evaluateHorizon("5m", feats)
 		p10m = p.evaluateHorizon("10m", feats)
@@ -183,17 +187,20 @@ func (p *Predictor) Predict(state domain.MatchState, feats map[string]float64, q
 		AsOfMatchSecond: state.ClockSeconds,
 		CalculatedAt:    time.Now(),
 		Probabilities: domain.Probabilities{
-			GoalNext5m:         roundProb(p5m),
-			GoalNext10m:        roundProb(p10m),
-			GoalBeforeFullTime: roundProb(pFT),
+			GoalNext5m:              roundProb(p5m),
+			GoalNext10m:             roundProb(p10m),
+			GoalBeforeFullTime:      roundProb(pFT),
+			TwoOrMoreBeforeFullTime: roundProb(pTwo),
 		},
-		DataQuality:        qualityScore,
-		ConfidenceBand:     confBand,
-		Status:             predStatus,
-		ModelVersion:       p.artifact.ModelVersion,
-		CalibratorVersion:  "platt_v1",
-		FeatureVersion:     p.artifact.FeatureVersion,
-		PredictionSequence: p.sequence,
+		DataQuality:            qualityScore,
+		ConfidenceBand:         confBand,
+		Status:                 predStatus,
+		ModelVersion:           p.artifact.ModelVersion,
+		CalibratorVersion:      "platt_v1",
+		FeatureVersion:         p.artifact.FeatureVersion,
+		PredictionSequence:     p.sequence,
+		ExpectedGoalsRemaining: roundProb(expectedRemaining),
+		Contributions:          contributions,
 	}, nil
 }
 
@@ -226,4 +233,21 @@ func roundProb(p float64) float64 {
 // an average over every generation whose predictions are still in the store.
 func (p *Predictor) ModelVersion() string {
 	return p.artifact.ModelVersion
+}
+
+// AlertQualified is deliberately target-specific and artifact-driven. A
+// missing validation block is false, so an older model can never silently
+// power commercial alerts. Qualifying one-more-goal does not implicitly
+// qualify the materially harder two-more-goals market.
+func (p *Predictor) AlertQualified(additionalGoals int) bool {
+	if p.hazard == nil || p.hazard.Validation.HoldoutMatches < 500 {
+		return false
+	}
+	if additionalGoals == 1 {
+		return p.hazard.Validation.OneGoalQualified
+	}
+	if additionalGoals == 2 {
+		return p.hazard.Validation.TwoGoalQualified
+	}
+	return false
 }

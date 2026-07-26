@@ -130,7 +130,7 @@ func TestBreakEvenOddsAndItsBand(t *testing.T) {
 func TestIntervalNarrowsWithSampleSize(t *testing.T) {
 	prevWidth := math.Inf(1)
 	for _, n := range []int{50, 100, 500, 5000} {
-		low, high := jeffreysInterval(n/2, n)
+		low, high := wilsonInterval(n/2, n)
 		width := high - low
 		if width >= prevWidth {
 			t.Fatalf("n=%d width %.4f did not narrow versus previous %.4f", n, width, prevWidth)
@@ -142,7 +142,7 @@ func TestIntervalNarrowsWithSampleSize(t *testing.T) {
 // Cross-checked against scipy: the Wilson interval for 25/50 is
 // approximately 36.6% to 63.4%, so the break-even odds run 1.58 to 2.73.
 func TestIntervalMatchesKnownValues(t *testing.T) {
-	low, high := jeffreysInterval(25, 50)
+	low, high := wilsonInterval(25, 50)
 	if math.Abs(low-0.366) > 0.005 || math.Abs(high-0.634) > 0.005 {
 		t.Fatalf("interval for 25/50 = [%.3f, %.3f], want approximately [0.366, 0.634]", low, high)
 	}
@@ -156,7 +156,7 @@ func TestIntervalMatchesKnownValues(t *testing.T) {
 // naive normal-approximation interval breaks.
 func TestIntervalStaysAProbabilityAtTheExtremes(t *testing.T) {
 	for _, tc := range []struct{ wins, n int }{{0, 10}, {10, 10}, {0, 1}, {1, 1}} {
-		low, high := jeffreysInterval(tc.wins, tc.n)
+		low, high := wilsonInterval(tc.wins, tc.n)
 		if low < 0 || high > 1 || low > high {
 			t.Errorf("%d/%d gave [%v, %v]", tc.wins, tc.n, low, high)
 		}

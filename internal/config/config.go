@@ -22,8 +22,20 @@ type Config struct {
 	DBPath    string
 	ModelPath string
 
-	FirebaseDatabaseURL string
-	FirebaseAuth        string
+	FirebaseDatabaseURL   string
+	FirebaseAuth          string
+	OddsAPIKey            string
+	OddsAPIBaseURL        string
+	OddsBookmaker         string
+	OddsPollInterval      time.Duration
+	AlertEngineEnabled    bool
+	TelegramEnabled       bool
+	TelegramBotToken      string
+	TelegramWebhookSecret string
+	AdminPasswordHash     string
+	AdminSessionSecret    string
+	AllowedWebOrigin      string
+	HistoricalDatasetPath string
 
 	PollInterval time.Duration
 
@@ -56,14 +68,41 @@ func Load() Config {
 
 		Port:      getEnv("PORT", "8080"),
 		DBPath:    getEnv("DB_PATH", "./golo.db"),
-		ModelPath: getEnv("MODEL_PATH", "./models/baseline_v1.json"),
+		ModelPath: getEnv("MODEL_PATH", "./models/hazard_v1.json"),
 
-		FirebaseDatabaseURL: getEnv("FIREBASE_DATABASE_URL", ""),
-		FirebaseAuth:        getEnv("FIREBASE_AUTH", ""),
+		FirebaseDatabaseURL:   getEnv("FIREBASE_DATABASE_URL", ""),
+		FirebaseAuth:          getEnv("FIREBASE_AUTH", ""),
+		OddsAPIKey:            getEnv("ODDS_API_KEY", ""),
+		OddsAPIBaseURL:        getEnv("ODDS_API_BASE_URL", "https://api.odds-api.io/v3"),
+		OddsBookmaker:         getEnv("ODDS_BOOKMAKER", "Bet365"),
+		OddsPollInterval:      getEnvDuration("ODDS_POLL_INTERVAL_SECONDS", 45*time.Second),
+		AlertEngineEnabled:    getEnvBool("ALERT_ENGINE_ENABLED", false),
+		TelegramEnabled:       getEnvBool("TELEGRAM_ENABLED", false),
+		TelegramBotToken:      getEnv("TELEGRAM_BOT_TOKEN", ""),
+		TelegramWebhookSecret: getEnv("TELEGRAM_WEBHOOK_SECRET", ""),
+		AdminPasswordHash:     getEnv("ADMIN_PASSWORD_HASH", ""),
+		AdminSessionSecret:    getEnv("ADMIN_SESSION_SECRET", ""),
+		AllowedWebOrigin:      getEnv("ALLOWED_WEB_ORIGIN", ""),
+		HistoricalDatasetPath: getEnv("HISTORICAL_DATASET_PATH", "./ml/data/fixtures.jsonl"),
 
 		PollInterval: getEnvDuration("PROVIDER_POLL_INTERVAL_SECONDS", 3*time.Second),
 
 		PriorityCompetitions: getEnvList("PRIORITY_COMPETITION_IDS"),
+	}
+}
+
+func getEnvBool(key string, fallback bool) bool {
+	value := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
+	if value == "" {
+		return fallback
+	}
+	switch value {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return fallback
 	}
 }
 

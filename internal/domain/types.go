@@ -196,27 +196,39 @@ const (
 
 // Probabilities holds the predicted probabilities for all horizons.
 type Probabilities struct {
-	GoalNext5m             float64 `json:"goalNext5m"`
-	GoalNext10m            float64 `json:"goalNext10m"`
-	GoalBeforeFullTime     float64 `json:"goalBeforeFullTime"`
-	HomeGoalBeforeFullTime float64 `json:"homeGoalBeforeFullTime,omitempty"`
-	AwayGoalBeforeFullTime float64 `json:"awayGoalBeforeFullTime,omitempty"`
+	GoalNext5m              float64 `json:"goalNext5m"`
+	GoalNext10m             float64 `json:"goalNext10m"`
+	GoalBeforeFullTime      float64 `json:"goalBeforeFullTime"`
+	TwoOrMoreBeforeFullTime float64 `json:"twoOrMoreGoalsBeforeFullTime"`
+	HomeGoalBeforeFullTime  float64 `json:"homeGoalBeforeFullTime,omitempty"`
+	AwayGoalBeforeFullTime  float64 `json:"awayGoalBeforeFullTime,omitempty"`
+}
+
+// FeatureContribution is one auditable term in the hazard model's
+// log-intensity. Contribution always equals Value*Coefficient.
+type FeatureContribution struct {
+	Name         string  `json:"name"`
+	Value        float64 `json:"value"`
+	Coefficient  float64 `json:"coefficient"`
+	Contribution float64 `json:"contribution"`
 }
 
 // Prediction represents the model output for a match at a given instant.
 // See blueprint §10.2.
 type Prediction struct {
-	MatchID            string           `json:"matchId"`
-	AsOfMatchSecond    int              `json:"asOfMatchSecond"`
-	CalculatedAt       time.Time        `json:"calculatedAt"`
-	Probabilities      Probabilities    `json:"probabilities"`
-	DataQuality        float64          `json:"dataQuality"`
-	ConfidenceBand     ConfidenceBand   `json:"confidenceBand"`
-	Status             PredictionStatus `json:"status"`
-	ModelVersion       string           `json:"modelVersion"`
-	CalibratorVersion  string           `json:"calibratorVersion"`
-	FeatureVersion     string           `json:"featureVersion"`
-	PredictionSequence int              `json:"predictionSequence"`
+	MatchID                string                `json:"matchId"`
+	AsOfMatchSecond        int                   `json:"asOfMatchSecond"`
+	CalculatedAt           time.Time             `json:"calculatedAt"`
+	Probabilities          Probabilities         `json:"probabilities"`
+	DataQuality            float64               `json:"dataQuality"`
+	ConfidenceBand         ConfidenceBand        `json:"confidenceBand"`
+	Status                 PredictionStatus      `json:"status"`
+	ModelVersion           string                `json:"modelVersion"`
+	CalibratorVersion      string                `json:"calibratorVersion"`
+	FeatureVersion         string                `json:"featureVersion"`
+	PredictionSequence     int                   `json:"predictionSequence"`
+	ExpectedGoalsRemaining float64               `json:"expectedGoalsRemaining"`
+	Contributions          []FeatureContribution `json:"contributions,omitempty"`
 }
 
 // ProviderHealth captures the operational status of a data provider.

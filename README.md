@@ -1,6 +1,6 @@
 # Golo
 
-Golo estimates, in near-real-time, the probability of at least one goal occurring in the rest of a live football match, at several horizons (5min, 10min, full-time, home/away). It's a private research tool, not a betting product — no automated wagering, no LLM in the prediction path.
+Golo estimates, in near-real-time, the probability of one or two additional goals in a live football match. It includes an admin-only strategy laboratory and a private, invitation-only Telegram beta. There is no automated wagering, stake recommendation, or LLM in the prediction path.
 
 The full product/technical specification lives in [`context/Golo_Blueprint_MVP.md`](context/Golo_Blueprint_MVP.md) (Portuguese); the UI/UX spec is in [`context/Golo_UI_UX_Blueprint.md`](context/Golo_UI_UX_Blueprint.md). Treat those as the source of truth for scope and architecture decisions.
 
@@ -12,7 +12,7 @@ make build
 make run
 ```
 
-The API server starts on `http://localhost:8080` (`/healthz`, `/api/matches`, `/api/matches/:id`, `/api/matches/:id/stream` SSE, `/api/metrics`, `/api/replay/control`).
+The API server starts on `http://localhost:8080`. Public research endpoints live under `/api/matches` and `/api/metrics`; protected beta controls live under `/api/admin`.
 
 In a second terminal:
 
@@ -28,9 +28,22 @@ Set `PROVIDER=sportmonks` and `SPORTMONKS_API_KEY` in `.env` (see `.env.example`
 
 SportMonks scopes which leagues are fetchable at the account/plan level (you pick leagues in their dashboard), not via an API parameter — a Free Plan key only returns whatever small fixed set of leagues that plan includes. Current league priority for this project: **Brasileirão Série A, Copa Libertadores**, then **MLS, Liga MX**. Once a plan with real access to those leagues exists, put their SportMonks `league_id`s in `PRIORITY_COMPETITION_IDS` (comma-separated, priority order) — `internal/providers/sportmonks` will surface matches from those leagues first without hiding others.
 
-## Status
+## Private beta and fail-closed rollout
 
-Backend domain logic (reducer, feature engine, predictor, calibration, SQLite eventstore, real `/api/metrics` evaluator) and the frontend component set are implemented and tested (`make test`). Firebase (Realtime DB + Hosting), GCP deployment (Compute Engine/Terraform), and training a real model on real historical data are not yet done — those require human-gated steps (account creation, billing) documented in the blueprint's roadmap (§24, gates 2+).
+Copy the beta settings from `.env.example`, configure a bcrypt admin hash and a 32+ character session secret, then open **Strategy Lab**. Strategy edits are immutable versions and may only be armed after all chronological evidence gates pass.
+
+The shipped `hazard_v1.2.0` artifact was evaluated against a constant-rate baseline on newest-season holdouts. It currently does **not** beat that baseline for either one or two remaining goals, so `model_qualified` rejects every alert. This is deliberate. Rebuild timestamped activity timelines and retrain before considering delivery:
+
+```bash
+ml/.venv/bin/python ml/src/build_dataset.py
+ml/.venv/bin/python ml/src/train_baseline.py
+```
+
+Use Odds-API.io only in shadow mode on a development/free plan. Before accepting payment, verify commercial usage and deep-link authorization, select adequate request capacity, then explicitly set `ALERT_ENGINE_ENABLED=true`. The “two more goals” market also requires its own model qualification and the separate dashboard switch.
+
+Telegram enrollment is one-time-code based. A user sends `/start CODE`, confirms 18+ and the beta terms, and receives the same centrally armed strategies until their manually managed expiry. Every qualified entry is retained with its offered price, model/market probability, evidence, and gate decisions; every win, loss, or void is forwarded.
+
+All messages include: `18+ · Ministério da Fazenda adverte: Aposta não é investimento.`
 
 ## Development
 
@@ -38,4 +51,5 @@ Backend domain logic (reducer, feature engine, predictor, calibration, SQLite ev
 make test    # go test ./...
 make vet     # go vet ./...
 make fmt     # gofmt -l . (formatting check)
+npm --prefix apps/web run build
 ```

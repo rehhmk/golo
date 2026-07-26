@@ -19,6 +19,7 @@
         "goalNext5m": { "type": "number", "minimum": 0, "maximum": 1 },
         "goalNext10m": { "type": "number", "minimum": 0, "maximum": 1 },
         "goalBeforeFullTime": { "type": "number", "minimum": 0, "maximum": 1 },
+        "twoOrMoreGoalsBeforeFullTime": { "type": "number", "minimum": 0, "maximum": 1 },
         "homeGoalBeforeFullTime": { "type": "number", "minimum": 0, "maximum": 1 },
         "awayGoalBeforeFullTime": { "type": "number", "minimum": 0, "maximum": 1 }
       }
@@ -30,5 +31,19 @@
     "calibratorVersion": { "type": "string" },
     "featureVersion": { "type": "string" },
     "predictionSequence": { "type": "integer", "minimum": 0 }
+    ,"expectedGoalsRemaining": { "type": "number", "minimum": 0 }
+    ,"contributions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "value", "coefficient", "contribution"],
+        "properties": {
+          "name": { "type": "string" },
+          "value": { "type": "number" },
+          "coefficient": { "type": "number" },
+          "contribution": { "type": "number" }
+        }
+      }
+    }
   }
 }

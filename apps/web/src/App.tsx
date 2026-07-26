@@ -5,6 +5,7 @@ import { MatchDetail } from './components/MatchDetail';
 import { ReplayControl } from './components/ReplayControl';
 import { EvaluationDashboard } from './components/EvaluationDashboard';
 import { HowItWorks } from './components/HowItWorks';
+import { StrategyLab } from './components/StrategyLab';
 import { MatchUpdate, Prediction } from './types';
 import { API_BASE_URL } from './config';
 
@@ -262,6 +263,8 @@ export const App: React.FC = () => {
         {activeTab === 'howitworks' && <HowItWorks />}
 
         {activeTab === 'analytics' && <EvaluationDashboard matches={matches} />}
+
+        {activeTab === 'strategies' && <StrategyLab />}
       </main>
 
       {/* Footer */}

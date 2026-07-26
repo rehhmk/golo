@@ -60,6 +60,7 @@ export interface Probabilities {
   goalNext5m: number;
   goalNext10m: number;
   goalBeforeFullTime: number;
+  twoOrMoreGoalsBeforeFullTime?: number;
   homeGoalBeforeFullTime?: number;
   awayGoalBeforeFullTime?: number;
 }
@@ -76,6 +77,8 @@ export interface Prediction {
   calibratorVersion: string;
   featureVersion: string;
   predictionSequence: number;
+  expectedGoalsRemaining?: number;
+  contributions?: Array<{ name: string; value: number; coefficient: number; contribution: number }>;
 }
 
 export interface TrackRecord {

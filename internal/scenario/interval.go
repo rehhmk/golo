@@ -5,11 +5,11 @@ import "math"
 // z95 is the standard normal quantile for a two-sided 95% interval.
 const z95 = 1.959963984540054
 
-// jeffreysInterval returns a 95% confidence interval for a hit rate observed
+// wilsonInterval returns a 95% confidence interval for a hit rate observed
 // as wins out of n.
 //
-// Despite the name it computes the Wilson score interval, which needs no
-// special functions and behaves well exactly where the naive textbook
+// The Wilson score interval needs no special functions and behaves well
+// exactly where the naive textbook
 // interval fails: small samples, and rates near 0 or 1. The plain
 // normal-approximation interval can run below zero or above one and badly
 // undercovers at the extremes — a scenario that won 9 of 10 would get an
@@ -19,7 +19,7 @@ const z95 = 1.959963984540054
 // one invites betting at a price the evidence does not support: 25 wins in 50
 // looks like exactly break-even odds of 2.00, while the interval puts the
 // true break-even anywhere between 1.57 and 2.74.
-func jeffreysInterval(wins, n int) (low, high float64) {
+func wilsonInterval(wins, n int) (low, high float64) {
 	if n <= 0 {
 		return 0, 1
 	}

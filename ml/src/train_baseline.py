@@ -23,17 +23,10 @@ What is fitted, and what is not
 Fitted from data: the base rate and how intensity varies with match time,
 scoreline and red cards.
 
-NOT fitted: the activity terms (shots, shots on target, corners, dangerous
-attacks). SportMonks stores those as cumulative fixture statistics rather than
-timestamped events, so for a finished match only final totals exist and no
-point-in-time value can be reconstructed. Those coefficients remain a prior.
-
-To stop that prior from silently inflating the fitted base, the activity terms
-are *centered*: each is expressed relative to a typical value, so a match with
-ordinary activity gets a multiplier of 1.0 and only above-average pressure
-raises the intensity. The centering constants come from measured per-10-minute
-rates (ml/data/activity_baseline.json) when available, and from documented
-defaults otherwise.
+Activity terms are fitted only when timestamped timeline events are available
+for enough training matches. Legacy datasets without that timeline retain the
+documented centered priors and are explicitly described as such in the
+artifact. Final cumulative statistics are never used as point-in-time inputs.
 
 Validation holds out the most recent season of every league — the same
 direction as real deployment, so nothing leaks backwards from the future.
@@ -75,6 +68,7 @@ ACTIVITY_PRIORS = {
     "dangerous_attacks_10m_total": 0.008,
     "xg_10m_total": 0.9,
 }
+MIN_ACTIVITY_MATCHES = 500
 
 # Fallback typical per-10-minute values, used when no measured baseline exists.
 # Derived from routine full-match totals (both teams combined): ~21 shots,
@@ -107,6 +101,7 @@ def build_slices(matches):
         reds = m["red_cards"]
         goal_secs = np.array([g["second"] for g in goals], dtype=float)
         goal_home = np.array([bool(g["home"]) for g in goals], dtype=bool)
+        activity = m.get("activity_events") or []
 
         t = 0.0
         while t < end:
@@ -124,8 +119,7 @@ def build_slices(matches):
 
             in_slice = int(np.sum((goal_secs > t) & (goal_secs <= slice_end)))
 
-            records.append(
-                {
+            record = {
                     "fixture_id": m["fixture_id"],
                     "league_id": m["league_id"],
                     "season": m["season"],
@@ -145,7 +139,13 @@ def build_slices(matches):
                     "abs_red_diff": abs(red_home - red_away),
                     "goal_secs_after": None,
                 }
-            )
+            for feature in ACTIVITY_PRIORS:
+                record[feature] = sum(
+                    1
+                    for event in activity
+                    if event.get("kind") == feature and max(0.0, t - 600.0) < float(event["second"]) <= t
+                )
+            records.append(record)
             t = slice_end
 
     return pd.DataFrame.from_records(records)
@@ -156,7 +156,7 @@ def add_horizon_labels(df, matches):
     the final whistle."""
     by_id = {m["fixture_id"]: np.array([g["second"] for g in m["goals"]], dtype=float) for m in matches}
 
-    next5, next10, before_ft = [], [], []
+    next5, next10, before_ft, two_before_ft = [], [], [], []
     for fixture_id, t, end in zip(df["fixture_id"].values, df["t"].values, df["end_second"].values):
         secs = by_id[fixture_id]
         after = secs[secs > t]
@@ -164,10 +164,12 @@ def add_horizon_labels(df, matches):
         next5.append(1 if nxt <= min(t + 300, end) else 0)
         next10.append(1 if nxt <= min(t + 600, end) else 0)
         before_ft.append(1 if nxt <= end else 0)
+        two_before_ft.append(1 if int(np.sum((secs > t) & (secs <= end))) >= 2 else 0)
 
     df["label_5m"] = next5
     df["label_10m"] = next10
     df["label_ft"] = before_ft
+    df["label_two_ft"] = two_before_ft
     return df
 
 
@@ -199,8 +201,8 @@ class FittedHazard:
         return np.exp(self.intercept + X @ beta)
 
 
-def fit(df_train):
-    names = FEATURES + [RED_FEATURE]
+def fit(df_train, activity_features=None):
+    names = FEATURES + [RED_FEATURE] + list(activity_features or [])
     X = df_train[names].to_numpy(dtype=float)
     y = df_train["goals_in_slice"].to_numpy(dtype=float)
     exposure = df_train["exposure"].to_numpy(dtype=float)
@@ -232,6 +234,8 @@ def probabilities(model, df, activity_centers=None):
     for key, window in (("5m", 300.0), ("10m", 600.0), ("ft", None)):
         w = remaining if window is None else np.minimum(window, remaining)
         out[key] = 1.0 - np.exp(-lam * w)
+    mu_ft = lam * remaining
+    out["two_ft"] = 1.0 - np.exp(-mu_ft) * (1.0 + mu_ft)
     return out, lam
 
 
@@ -266,6 +270,8 @@ def constant_rate_baseline(df_train, df_test):
     for key, window in (("5m", 300.0), ("10m", 600.0), ("ft", None)):
         w = remaining if window is None else np.minimum(window, remaining)
         out[key] = 1.0 - np.exp(-lam * w)
+    mu_ft = lam * remaining
+    out["two_ft"] = 1.0 - np.exp(-mu_ft) * (1.0 + mu_ft)
     return out, lam
 
 
@@ -294,15 +300,28 @@ def main():
     matches = load_matches()
     print(f"loaded {len(matches)} matches")
 
-    df = build_slices(matches)
-    df = add_horizon_labels(df, matches)
+    activity_match_count = sum(1 for m in matches if m.get("activity_timeline_available"))
+    fitted_activity = activity_match_count >= MIN_ACTIVITY_MATCHES
+    modeling_matches = (
+        [m for m in matches if m.get("activity_timeline_available")]
+        if fitted_activity
+        else matches
+    )
+    centers, centers_source = load_activity_centers()
+
+    df = build_slices(modeling_matches)
+    df = add_horizon_labels(df, modeling_matches)
+    activity_features = list(ACTIVITY_PRIORS) if fitted_activity else []
+    if fitted_activity:
+        for feature in activity_features:
+            df[feature] = df[feature] - centers[feature]
     print(f"built {len(df)} one-minute slices")
 
     df_train, df_test, latest = holdout_split(df)
     print(f"train {len(df_train)} slices / test {len(df_test)} slices")
     print(f"held out seasons: {latest}")
 
-    model = fit(df_train)
+    model = fit(df_train, activity_features)
     coefs = model.coefficients
     base_goals_per_90 = math.exp(model.intercept) * REGULATION_SECONDS
 
@@ -337,7 +356,12 @@ def main():
     print()
     print(f"{'horizon':8s} {'model':10s} {'Brier':>8s} {'LogLoss':>9s} {'ECE':>8s} {'pred':>7s} {'actual':>7s}")
     summary = {}
-    for key, label_col in (("5m", "label_5m"), ("10m", "label_10m"), ("ft", "label_ft")):
+    for key, label_col in (
+        ("5m", "label_5m"),
+        ("10m", "label_10m"),
+        ("ft", "label_ft"),
+        ("two_ft", "label_two_ft"),
+    ):
         labels = df_test[label_col].to_numpy(dtype=float)
         m_fit = metrics(fitted_probs[key], labels)
         m_const = metrics(const_probs[key], labels)
@@ -359,7 +383,7 @@ def main():
     # drift upward across these seasons (Brasileirao: 2.36 -> 2.53 -> 2.65
     # goals/90), so shipping a model blind to the most recent one would bake
     # in a known-stale base rate.
-    final_model = fit(df)
+    final_model = fit(df, activity_features)
     final_coefs = final_model.coefficients
     final_base = math.exp(final_model.intercept) * REGULATION_SECONDS
     print()
@@ -379,34 +403,81 @@ def main():
     for name, value in final_coefs.items():
         report.append(f"| {name} | {value:+.8f} |")
 
-    centers, centers_source = load_activity_centers()
+    holdout_matches = int(df_test["fixture_id"].nunique())
+    one_qualified = summary["ft"]["fitted"]["brier"] < summary["ft"]["constant"]["brier"]
+    two_qualified = summary["two_ft"]["fitted"]["brier"] < summary["two_ft"]["constant"]["brier"]
+    competition_rates = {}
+    for league_id, rows in df.groupby("league_id"):
+        exposure = float(rows["exposure"].sum())
+        competition_rates[str(league_id)] = round(
+            float(rows["goals_in_slice"].sum()) / exposure * REGULATION_SECONDS,
+            6,
+        )
+
+    if fitted_activity:
+        shipped_activity = {
+            name: round(float(final_coefs[name]), 8)
+            for name in activity_features
+        }
+        activity_note = (
+            f"Activity coefficients were fitted from timestamped timeline events in "
+            f"{activity_match_count} matches."
+        )
+    else:
+        shipped_activity = dict(ACTIVITY_PRIORS)
+        activity_note = (
+            f"Only {activity_match_count} matches contained a usable timestamped activity "
+            f"timeline (minimum {MIN_ACTIVITY_MATCHES}); centered documented priors remain active."
+        )
 
     artifact = {
-        "modelVersion": "hazard_v1.1.0",
-        "featureVersion": "v1.1.0",
+        "modelVersion": "hazard_v1.2.0",
+        "featureVersion": "v1.2.0",
         "modelType": "poisson_hazard",
         "baseGoalsPer90": round(final_base, 6),
-        "coefficients": {name: round(float(v), 8) for name, v in final_coefs.items() if name != RED_FEATURE},
+        "competitionBaseGoalsPer90": competition_rates,
+        "coefficients": {
+            name: round(float(v), 8)
+            for name, v in final_coefs.items()
+            if name != RED_FEATURE and name not in activity_features
+        },
         "redCardCoefficient": round(float(final_coefs[RED_FEATURE]), 8),
-        "activityCoefficients": {k: v for k, v in ACTIVITY_PRIORS.items()},
+        "activityCoefficients": shipped_activity,
         "activityCenters": {k: round(float(v), 6) for k, v in centers.items()},
         "minMultiplier": 0.25,
         "maxMultiplier": 4.0,
         "trainedUntil": max(m["starting_at"] or "" for m in matches)[:10],
-        "trainingMatches": len(matches),
+        "trainingMatches": len(modeling_matches),
+        "validation": {
+            "holdoutMatches": holdout_matches,
+            "oneGoalBrier": round(summary["ft"]["fitted"]["brier"], 8),
+            "oneGoalBaselineBrier": round(summary["ft"]["constant"]["brier"], 8),
+            "twoGoalBrier": round(summary["two_ft"]["fitted"]["brier"], 8),
+            "twoGoalBaselineBrier": round(summary["two_ft"]["constant"]["brier"], 8),
+            "oneGoalQualified": bool(one_qualified),
+            "twoGoalQualified": bool(two_qualified),
+        },
         "notes": (
             "Base rate and the match_second / abs_score_diff / goals_so_far / red-card terms are "
             "fitted by Poisson regression on {n} historical matches, validated on a held-out most-recent "
-            "season per league. The activityCoefficients are NOT fitted: SportMonks stores shots, corners "
-            "and attacks as cumulative fixture statistics rather than timestamped events, so no "
-            "point-in-time value is recoverable from history. They are applied relative to activityCenters "
-            "so ordinary activity leaves the fitted intensity unchanged. xG is unavailable on this plan and "
-            "stays at zero."
-        ).format(n=len(matches)),
+            "season per league. {activity_note} Activity values are centered so ordinary activity leaves "
+            "the fitted intensity unchanged. xG remains zero when unavailable."
+        ).format(n=len(modeling_matches), activity_note=activity_note),
     }
 
     serialized = json.dumps(
-        {k: artifact[k] for k in ("baseGoalsPer90", "coefficients", "redCardCoefficient", "activityCoefficients", "activityCenters")},
+        {
+            k: artifact[k]
+            for k in (
+                "baseGoalsPer90",
+                "competitionBaseGoalsPer90",
+                "coefficients",
+                "redCardCoefficient",
+                "activityCoefficients",
+                "activityCenters",
+                "validation",
+            )
+        },
         sort_keys=True,
     ).encode()
     artifact["sha256"] = hashlib.sha256(serialized).hexdigest()
@@ -419,6 +490,7 @@ def main():
     print(f"wrote {OUT}")
     print(f"wrote {REPORT}")
     print(f"activity centering: {centers_source}")
+    print(f"alert qualification: one_goal={one_qualified}, two_goal={two_qualified}")
 
 
 if __name__ == "__main__":

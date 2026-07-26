@@ -6,15 +6,19 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
+	"github.com/enzotriches/golo/internal/adminauth"
 	"github.com/enzotriches/golo/internal/api"
 	"github.com/enzotriches/golo/internal/config"
 	"github.com/enzotriches/golo/internal/domain"
 	"github.com/enzotriches/golo/internal/evaluation"
 	"github.com/enzotriches/golo/internal/eventstore"
 	"github.com/enzotriches/golo/internal/features"
+	"github.com/enzotriches/golo/internal/odds"
+	"github.com/enzotriches/golo/internal/odds/oddsapiio"
 	"github.com/enzotriches/golo/internal/predictor"
 	"github.com/enzotriches/golo/internal/providers"
 	"github.com/enzotriches/golo/internal/providers/mock"
@@ -22,12 +26,16 @@ import (
 	"github.com/enzotriches/golo/internal/publisher"
 	"github.com/enzotriches/golo/internal/quality"
 	"github.com/enzotriches/golo/internal/reducer"
+	"github.com/enzotriches/golo/internal/signals"
+	"github.com/enzotriches/golo/internal/telegram"
 )
 
 func main() {
 	log.Println("Starting Golo Engine (Real-Time Football Probability Engine v1.0)...")
 
 	cfg := config.Load()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	// 1. Initialize SQLite Database EventStore
 	store, err := eventstore.NewSQLiteStore(cfg.DBPath)
@@ -49,21 +57,47 @@ func main() {
 	red := reducer.NewReducer()
 	eval := quality.NewEvaluator()
 	pub := publisher.NewPublisher(cfg.FirebaseDatabaseURL, cfg.FirebaseAuth)
+	tg := telegram.New(cfg.TelegramBotToken, cfg.TelegramWebhookSecret, store)
+	signalSettings, err := store.LoadSignalSettings()
+	if err != nil {
+		log.Fatalf("Failed to load signal settings: %v", err)
+	}
+	if err := signalSettings.Validate(); err != nil {
+		log.Printf("Stored signal settings are invalid (%v); reverting to safe defaults", err)
+		signalSettings = signals.DefaultSettings()
+	}
+	// Environment flags are the safe deployment defaults; the dashboard may
+	// subsequently pause/resume within the hard ALERT_ENGINE_ENABLED ceiling.
+	signalSettings.Bookmaker = cfg.OddsBookmaker
+	if err := store.SaveSignalSettings(signalSettings); err != nil {
+		log.Fatalf("Failed to save signal settings: %v", err)
+	}
+	signalEngine := signals.NewEngine(store, tg, signalSettings, map[int]bool{
+		1: predEngine.AlertQualified(1),
+		2: predEngine.AlertQualified(2),
+	}, cfg.AlertEngineEnabled, cfg.TelegramEnabled)
+	oddsState := &liveOddsCache{}
+	if cfg.OddsAPIKey != "" {
+		oddsProvider := oddsapiio.New(cfg.OddsAPIKey, cfg.OddsAPIBaseURL, cfg.OddsBookmaker)
+		go runOddsLoop(ctx, oddsProvider, cfg.OddsPollInterval, oddsState)
+	}
 
 	// 4. Initialize Data Provider (selected via PROVIDER env var: mock | sportmonks)
 	prov := newProvider(cfg)
 	log.Printf("Data Provider initialized: %s", prov.Name())
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
 	// 5. Ingestion & Inference Loop
-	go runIngestionLoop(ctx, prov, cfg.PollInterval, store, red, fe, eval, predEngine, pub)
+	go runIngestionLoop(ctx, prov, cfg.PollInterval, store, red, fe, eval, predEngine, pub, signalEngine, oddsState)
 
 	// 6. Start HTTP API Server
 	addr := fmt.Sprintf(":%s", cfg.Port)
 
-	server := api.NewServer(store, pub, nil, predEngine.ModelVersion())
+	admin := adminauth.New(cfg.AdminPasswordHash, cfg.AdminSessionSecret, 8*time.Hour)
+	server := api.NewServerWithAdmin(store, pub, nil, predEngine.ModelVersion(), api.AdminDependencies{
+		Auth: admin, Telegram: tg, SignalEngine: signalEngine,
+		DatasetPath: cfg.HistoricalDatasetPath, AllowedOrigin: cfg.AllowedWebOrigin,
+		ProviderHealth: oddsState.Health,
+	})
 
 	go func() {
 		log.Printf("Golo HTTP API Server running at http://localhost%s", addr)
@@ -90,6 +124,8 @@ func runIngestionLoop(
 	eval *quality.Evaluator,
 	predEngine *predictor.Predictor,
 	pub *publisher.Publisher,
+	signalEngine *signals.Engine,
+	oddsState *liveOddsCache,
 ) {
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
@@ -123,6 +159,12 @@ func runIngestionLoop(
 				// kicked off yet or have just ended. Predicting on those
 				// publishes a probability for a match that isn't running.
 				if !isPredictable(m.Status) {
+					if signalEngine != nil {
+						if state, ok := matchStates[m.ID]; ok {
+							state.Status = m.Status
+							_ = signalEngine.Settle(ctx, state)
+						}
+					}
 					continue
 				}
 
@@ -198,6 +240,16 @@ func runIngestionLoop(
 				if err := store.SavePrediction(pred); err != nil {
 					log.Printf("Failed to save prediction: %v", err)
 				}
+				if signalEngine != nil {
+					if matched, err := odds.MatchEvent(m, state, oddsState.Events()); err == nil {
+						if err := signalEngine.Evaluate(ctx, m, state, pred, matched); err != nil {
+							log.Printf("Signal evaluation failed for %s: %v", m.ID, err)
+						}
+					}
+					if err := signalEngine.Settle(ctx, state); err != nil {
+						log.Printf("Signal settlement failed for %s: %v", m.ID, err)
+					}
+				}
 
 				// 7.5. Compute this match's own "goal in next 10m" track
 				// record, for the per-card "how right have we been" meter.
@@ -217,6 +269,73 @@ func runIngestionLoop(
 					log.Printf("Failed to publish update: %v", err)
 				}
 			}
+		}
+	}
+}
+
+type liveOddsCache struct {
+	mu          sync.RWMutex
+	events      []odds.Event
+	lastSuccess time.Time
+	lastError   time.Time
+	errorCount  int
+	message     string
+}
+
+func (c *liveOddsCache) Merge(events []odds.Event) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	byID := make(map[string]odds.Event, len(c.events)+len(events))
+	for _, event := range c.events {
+		byID[event.ID] = event
+	}
+	for _, event := range events {
+		byID[event.ID] = event
+	}
+	c.events = c.events[:0]
+	for _, event := range byID {
+		c.events = append(c.events, event)
+	}
+	c.lastSuccess, c.message = time.Now(), ""
+}
+
+func (c *liveOddsCache) RecordError(err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.lastError, c.errorCount, c.message = time.Now(), c.errorCount+1, err.Error()
+}
+
+func (c *liveOddsCache) Events() []odds.Event {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return append([]odds.Event(nil), c.events...)
+}
+
+func (c *liveOddsCache) Health() any {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return map[string]any{
+		"provider": "odds-api.io", "healthy": !c.lastSuccess.IsZero() && time.Since(c.lastSuccess) < 2*time.Minute,
+		"lastSuccessAt": c.lastSuccess, "lastErrorAt": c.lastError,
+		"errorCount": c.errorCount, "message": c.message, "cachedEvents": len(c.events),
+	}
+}
+
+func runOddsLoop(ctx context.Context, provider odds.Provider, interval time.Duration, cache *liveOddsCache) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		events, err := provider.FetchLive(ctx)
+		if err != nil {
+			log.Printf("Live odds poll failed: %v", err)
+			cache.RecordError(err)
+		} else {
+			cache.Merge(events)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
 		}
 	}
 }
