@@ -26,7 +26,9 @@ type Config struct {
 	FirebaseAuth          string
 	OddsAPIKey            string
 	OddsAPIBaseURL        string
+	OddsProvider          string
 	OddsBookmaker         string
+	OddsSportKeys         []string
 	OddsPollInterval      time.Duration
 	AlertEngineEnabled    bool
 	TelegramEnabled       bool
@@ -73,9 +75,11 @@ func Load() Config {
 		FirebaseDatabaseURL:   getEnv("FIREBASE_DATABASE_URL", ""),
 		FirebaseAuth:          getEnv("FIREBASE_AUTH", ""),
 		OddsAPIKey:            getEnv("ODDS_API_KEY", ""),
-		OddsAPIBaseURL:        getEnv("ODDS_API_BASE_URL", "https://api.odds-api.io/v3"),
-		OddsBookmaker:         getEnv("ODDS_BOOKMAKER", "Bet365"),
-		OddsPollInterval:      getEnvDuration("ODDS_POLL_INTERVAL_SECONDS", 45*time.Second),
+		OddsAPIBaseURL:        getEnv("ODDS_API_BASE_URL", "https://api.the-odds-api.com/v4"),
+		OddsProvider:          getEnv("ODDS_PROVIDER", "the-odds-api"),
+		OddsBookmaker:         getEnv("ODDS_BOOKMAKER", "Betsson"),
+		OddsSportKeys:         getEnvListWithDefault("ODDS_SPORT_KEYS", []string{"soccer_brazil_campeonato", "soccer_conmebol_copa_libertadores", "soccer_usa_mls", "soccer_mexico_ligamx"}),
+		OddsPollInterval:      getEnvDuration("ODDS_POLL_INTERVAL_SECONDS", 60*time.Second),
 		AlertEngineEnabled:    getEnvBool("ALERT_ENGINE_ENABLED", false),
 		TelegramEnabled:       getEnvBool("TELEGRAM_ENABLED", false),
 		TelegramBotToken:      getEnv("TELEGRAM_BOT_TOKEN", ""),
@@ -120,6 +124,13 @@ func getEnvList(key string) []string {
 		}
 	}
 	return out
+}
+
+func getEnvListWithDefault(key string, fallback []string) []string {
+	if values := getEnvList(key); len(values) > 0 {
+		return values
+	}
+	return append([]string(nil), fallback...)
 }
 
 // loadDotEnv parses a simple KEY=VALUE file (one per line, '#' comments,

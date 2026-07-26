@@ -19,6 +19,7 @@ import (
 	"github.com/enzotriches/golo/internal/features"
 	"github.com/enzotriches/golo/internal/odds"
 	"github.com/enzotriches/golo/internal/odds/oddsapiio"
+	"github.com/enzotriches/golo/internal/odds/theoddsapi"
 	"github.com/enzotriches/golo/internal/predictor"
 	"github.com/enzotriches/golo/internal/providers"
 	"github.com/enzotriches/golo/internal/providers/mock"
@@ -76,9 +77,18 @@ func main() {
 		1: predEngine.AlertQualified(1),
 		2: predEngine.AlertQualified(2),
 	}, cfg.AlertEngineEnabled, cfg.TelegramEnabled)
-	oddsState := &liveOddsCache{}
+	oddsState := &liveOddsCache{provider: "not configured"}
 	if cfg.OddsAPIKey != "" {
-		oddsProvider := oddsapiio.New(cfg.OddsAPIKey, cfg.OddsAPIBaseURL, cfg.OddsBookmaker)
+		var oddsProvider odds.Provider
+		switch cfg.OddsProvider {
+		case "the-odds-api":
+			oddsProvider = theoddsapi.New(cfg.OddsAPIKey, cfg.OddsAPIBaseURL, cfg.OddsBookmaker, cfg.OddsSportKeys)
+		case "odds-api-io":
+			oddsProvider = oddsapiio.New(cfg.OddsAPIKey, cfg.OddsAPIBaseURL, cfg.OddsBookmaker)
+		default:
+			log.Fatalf("unknown ODDS_PROVIDER %q", cfg.OddsProvider)
+		}
+		oddsState.provider = oddsProvider.Name()
 		go runOddsLoop(ctx, oddsProvider, cfg.OddsPollInterval, oddsState)
 	}
 
@@ -280,6 +290,7 @@ type liveOddsCache struct {
 	lastError   time.Time
 	errorCount  int
 	message     string
+	provider    string
 }
 
 func (c *liveOddsCache) Merge(events []odds.Event) {
@@ -315,7 +326,7 @@ func (c *liveOddsCache) Health() any {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return map[string]any{
-		"provider": "odds-api.io", "healthy": !c.lastSuccess.IsZero() && time.Since(c.lastSuccess) < 2*time.Minute,
+		"provider": c.provider, "healthy": !c.lastSuccess.IsZero() && time.Since(c.lastSuccess) < 2*time.Minute,
 		"lastSuccessAt": c.lastSuccess, "lastErrorAt": c.lastError,
 		"errorCount": c.errorCount, "message": c.message, "cachedEvents": len(c.events),
 	}
