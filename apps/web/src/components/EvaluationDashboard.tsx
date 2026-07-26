@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { BarChart3, CheckCircle2, ShieldAlert, Award, FileSpreadsheet } from 'lucide-react';
 import { EvaluationMetrics } from '../types';
+import { API_BASE_URL } from '../config';
 
 export const EvaluationDashboard: React.FC = () => {
   const [metrics, setMetrics] = useState<EvaluationMetrics | null>(null);
 
   useEffect(() => {
-    fetch('http://localhost:8080/api/metrics')
+    fetch(`${API_BASE_URL}/api/metrics`)
       .then((res) => res.json())
       .then((data) => setMetrics(data))
       .catch(() => {

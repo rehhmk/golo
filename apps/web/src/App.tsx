@@ -5,6 +5,7 @@ import { MatchDetail } from './components/MatchDetail';
 import { ReplayControl } from './components/ReplayControl';
 import { EvaluationDashboard } from './components/EvaluationDashboard';
 import { MatchUpdate, Prediction } from './types';
+import { API_BASE_URL } from './config';
 
 // Fallback mock matches for standalone preview
 const MOCK_MATCHES: MatchUpdate[] = [
@@ -153,7 +154,7 @@ export const App: React.FC = () => {
   // Poll HTTP API for live match updates
   useEffect(() => {
     const fetchMatches = () => {
-      fetch('http://localhost:8080/api/matches')
+      fetch(`${API_BASE_URL}/api/matches`)
         .then((res) => res.json())
         .then((data: MatchUpdate[]) => {
           if (Array.isArray(data) && data.length > 0) {
@@ -175,7 +176,7 @@ export const App: React.FC = () => {
   // slower than live match state, no need to hammer it every 3s.
   useEffect(() => {
     const fetchHitRate = () => {
-      fetch('http://localhost:8080/api/metrics')
+      fetch(`${API_BASE_URL}/api/metrics`)
         .then((res) => res.json())
         .then((data) => {
           if (typeof data.hitRatePct === 'number' && data.totalSnapshots > 0) {
@@ -195,7 +196,7 @@ export const App: React.FC = () => {
     setActiveTab('detail');
 
     // Fetch history for selected match
-    fetch(`http://localhost:8080/api/matches/${matchId}`)
+    fetch(`${API_BASE_URL}/api/matches/${matchId}`)
       .then((res) => res.json())
       .then((data) => {
         if (data.predictions) {
@@ -206,7 +207,7 @@ export const App: React.FC = () => {
   };
 
   const handleReplayAction = (action: string, speed?: string) => {
-    fetch('http://localhost:8080/api/replay/control', {
+    fetch(`${API_BASE_URL}/api/replay/control`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action, speed }),

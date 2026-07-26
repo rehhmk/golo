@@ -35,6 +35,10 @@ type Publisher struct {
 	firebaseURL  string
 	firebaseAuth string
 	httpClient   *http.Client
+
+	tokenMu      sync.Mutex
+	cachedToken  string
+	tokenExpires time.Time
 }
 
 func NewPublisher(firebaseURL string, firebaseAuth string) *Publisher {
@@ -98,10 +102,7 @@ const firebaseSyncMaxAttempts = 3
 // once — this previously failed completely silently, which made a broken
 // Firebase integration indistinguishable from a working one.
 func (p *Publisher) syncToFirebase(ctx context.Context, matchID string, update MatchUpdate) {
-	url := fmt.Sprintf("%s/matches/%s.json", p.firebaseURL, matchID)
-	if p.firebaseAuth != "" {
-		url += "?auth=" + p.firebaseAuth
-	}
+	baseURL := fmt.Sprintf("%s/matches/%s.json", p.firebaseURL, matchID)
 
 	data, err := json.Marshal(update)
 	if err != nil {
@@ -119,7 +120,13 @@ func (p *Publisher) syncToFirebase(ctx context.Context, matchID string, update M
 			}
 		}
 
-		req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, bytes.NewReader(data))
+		reqURL, err := p.authenticatedURL(ctx, baseURL)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodPut, reqURL, bytes.NewReader(data))
 		if err != nil {
 			lastErr = err
 			continue
@@ -146,4 +153,75 @@ func (p *Publisher) syncToFirebase(ctx context.Context, matchID string, update M
 	}
 
 	log.Printf("publisher: Firebase sync failed for match %s after %d attempts: %v", matchID, firebaseSyncMaxAttempts, lastErr)
+}
+
+// authenticatedURL appends an OAuth2 access token to the Realtime Database
+// REST URL. If FIREBASE_AUTH was configured explicitly, that value is used
+// as-is. Otherwise it fetches one from the GCE metadata server (the VM's own
+// service account, granted roles/firebasedatabase.admin at deploy time) —
+// legacy Firebase "database secrets" no longer work for RTDB instances
+// created after Google's mid-2024 deprecation, so a real OAuth2 token is
+// required, not just an opaque string.
+func (p *Publisher) authenticatedURL(ctx context.Context, baseURL string) (string, error) {
+	if p.firebaseAuth != "" {
+		return baseURL + "?access_token=" + p.firebaseAuth, nil
+	}
+
+	token, err := p.metadataAccessToken(ctx)
+	if err != nil {
+		return "", fmt.Errorf("no FIREBASE_AUTH set and metadata token fetch failed: %w", err)
+	}
+	return baseURL + "?access_token=" + token, nil
+}
+
+const metadataTokenURL = "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token"
+
+type metadataTokenResponse struct {
+	AccessToken string `json:"access_token"`
+	ExpiresIn   int    `json:"expires_in"`
+}
+
+// metadataAccessToken fetches (and caches) an OAuth2 access token for the
+// GCE instance's attached service account. Only works when actually running
+// on a GCE VM — the metadata server isn't reachable elsewhere, which is
+// expected (local/dev runs should set FIREBASE_AUTH or leave Firebase sync
+// disabled entirely by leaving FIREBASE_DATABASE_URL blank).
+func (p *Publisher) metadataAccessToken(ctx context.Context) (string, error) {
+	p.tokenMu.Lock()
+	defer p.tokenMu.Unlock()
+
+	if p.cachedToken != "" && time.Now().Before(p.tokenExpires) {
+		return p.cachedToken, nil
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, metadataTokenURL, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Metadata-Flavor", "Google")
+
+	client := http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("metadata server returned status %d", resp.StatusCode)
+	}
+
+	var tok metadataTokenResponse
+	if err := json.NewDecoder(resp.Body).Decode(&tok); err != nil {
+		return "", err
+	}
+	if tok.AccessToken == "" {
+		return "", fmt.Errorf("metadata server returned empty access token")
+	}
+
+	// Refresh a bit early to avoid racing the real expiry.
+	p.cachedToken = tok.AccessToken
+	p.tokenExpires = time.Now().Add(time.Duration(tok.ExpiresIn-60) * time.Second)
+
+	return p.cachedToken, nil
 }

@@ -16,6 +16,7 @@ bin/
 # Frontend
 apps/web/node_modules/
 apps/web/dist/
+apps/web/.firebase/
 
 # Local machine/editor config
 .claude/settings.local.json
