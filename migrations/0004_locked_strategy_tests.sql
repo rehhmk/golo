@@ -39,3 +39,13 @@ CREATE INDEX IF NOT EXISTS idx_locked_occurrence_test
     ON strategy_locked_occurrences(test_id, status, created_at);
 CREATE INDEX IF NOT EXISTS idx_locked_occurrence_match
     ON strategy_locked_occurrences(match_id, status);
+
+-- Existing versions are retained as Validation records, but an armed flag
+-- from a pre-Locked-Test release must not survive this migration.
+UPDATE strategies SET armed=0, updated_at=CURRENT_TIMESTAMP
+WHERE armed=1 AND NOT EXISTS (
+    SELECT 1 FROM strategy_locked_tests t
+    WHERE t.strategy_id=strategies.id
+      AND t.strategy_version=strategies.version
+      AND t.state='REVEALED_PASS'
+);
