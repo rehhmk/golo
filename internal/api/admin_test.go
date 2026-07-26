@@ -55,4 +55,18 @@ func TestAdminEndpointsRequireShortLivedBearerSession(t *testing.T) {
 	if protected.Code != http.StatusOK {
 		t.Fatalf("authorized request returned %d: %s", protected.Code, protected.Body.String())
 	}
+
+	for _, path := range []string{"strategies", "signals", "invitations", "subscribers"} {
+		response := httptest.NewRecorder()
+		request = httptest.NewRequest(http.MethodGet, "/api/admin/"+path, nil)
+		request.Header.Set("Authorization", "Bearer "+session.Token)
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusOK {
+			t.Fatalf("%s returned %d: %s", path, response.Code, response.Body.String())
+		}
+		var rows []json.RawMessage
+		if err := json.Unmarshal(response.Body.Bytes(), &rows); err != nil || rows == nil {
+			t.Fatalf("%s must return a JSON array, body=%q err=%v", path, response.Body.String(), err)
+		}
+	}
 }
