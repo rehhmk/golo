@@ -21,11 +21,13 @@ const (
 )
 
 type StoredStrategy struct {
-	Definition scenario.StrategyDefinition  `json:"definition"`
-	Report     scenario.QualificationReport `json:"report"`
-	Armed      bool                         `json:"armed"`
-	CreatedAt  time.Time                    `json:"createdAt"`
-	UpdatedAt  time.Time                    `json:"updatedAt"`
+	Definition      scenario.StrategyDefinition  `json:"definition"`
+	Report          scenario.QualificationReport `json:"report"`
+	Armed           bool                         `json:"armed"`
+	LockedTestID    string                       `json:"lockedTestId,omitempty"`
+	LockedTestState LockedTestState              `json:"lockedTestState,omitempty"`
+	CreatedAt       time.Time                    `json:"createdAt"`
+	UpdatedAt       time.Time                    `json:"updatedAt"`
 }
 
 type Decision struct {

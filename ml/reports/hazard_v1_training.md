@@ -1,8 +1,9 @@
 # Hazard model v1 — training report
 
 - Matches: 3282 (3282 distinct)
-- Slices: 327238 (268924 train / 58314 test)
-- Held-out seasons: {648: '2026', 743: '2026/2027', 779: '2026', 1122: '2026'}
+- Slices: 327238 (268924 training / 58314 validation)
+- Validation seasons: {648: '2026', 743: '2026/2027', 779: '2026', 1122: '2026'}
+- Excluded single-season leagues: []
 - Observed goals per match: 2.734
 - Constant-rate baseline: 2.459 goals/90min
 - Fitted base rate at reference state: 1.900 goals/90min
@@ -17,7 +18,7 @@
 | goals_so_far | -0.00629641 |
 | abs_red_diff | +0.02217672 |
 
-## Held-out performance
+## Validation performance
 
 | horizon | model | Brier | LogLoss | ECE | mean pred | base rate |
 |---|---|---|---|---|---|---|
@@ -30,7 +31,7 @@
 | two_ft | fitted | 0.18083 | 0.52932 | 0.03152 | 0.3763 | 0.4044 |
 | two_ft | constant | 0.17895 | 0.52480 | 0.01740 | 0.3875 | 0.4044 |
 
-## Reliability — goal before full time (held out)
+## Reliability — goal before full time (validation)
 
 | predicted | observed | n |
 |---|---|---|
@@ -47,7 +48,7 @@
 
 ## Shipped artifact
 
-Validation used a held-out season; the exported artifact is refitted on all 327238 slices from 3282 matches. Base rate 1.9182 goals/90 at the reference state (kickoff, level, no red cards).
+Validation used the newest already-inspected season; the exported artifact is refitted on all 327238 slices from 3282 matches. Base rate 1.9182 goals/90 at the reference state (kickoff, level, no red cards).
 
 | term | coefficient |
 |---|---|

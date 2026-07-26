@@ -5,12 +5,46 @@ type Condition = { field: string; operator: string; value: number };
 type Definition = {
   id: string; name: string; version: number; conditions: Condition[];
   competitionIds: string[]; additionalGoals: number; minimumOdds: number;
-  minimumSamples: number; minimumHoldout: number; minimumModelEdge: number; enabled: boolean;
+  minimumSamples: number; minimumValidation: number; minimumHoldout?: number;
+  minimumModelEdge: number; enabled: boolean;
 };
 type Result = { matchCount: number; hitRate: number; rateLow: number; rateHigh: number; oddsHigh: number };
+type PartitionSummary = {
+  matchCount: number; earliestKickoff?: string; latestKickoff?: string;
+  fixtureIdsSha256: string; competitionIds: string[];
+};
+type PartitionManifest = {
+  sha256: string; datasetSha256: string; policy: string;
+  training: PartitionSummary; validation: PartitionSummary; excludedCompetitionIds: string[];
+};
+type LockedReport = {
+  rule: Result; signal: Result; modelBrier: number; baselineBrier: number;
+  marketBrier: number; calibrationError: number; profitUnits: number; roiPct: number;
+  maxDrawdownUnits: number; quoteCoverage: number; qualified: boolean; failures: string[];
+  revealedAt: string;
+};
+type QualificationReport = {
+  training: Result; validation: Result; allMatches: Result;
+  validationQualified: boolean; modelValidationQualified: boolean; qualified: boolean;
+  validationFailures: string[]; failures: string[]; partition: PartitionManifest;
+  lockedTest?: LockedReport;
+};
 type StoredStrategy = {
-  definition: Definition; report: { allMatches: Result; holdout: Result; qualified: boolean; failures: string[] };
-  armed: boolean; createdAt: string;
+  definition: Definition; report: QualificationReport; armed: boolean; createdAt: string;
+  lockedTestId?: string; lockedTestState?: string;
+};
+type LockedTestView = {
+  id: string; strategyId: string; strategyVersion: number; state: string;
+  contractSha256: string; startedAt: string; readyAt?: string; revealedAt?: string;
+  progress: {
+    ruleAccepted: number; ruleResolved: number; signalAccepted: number; signalResolved: number;
+    voids: number; ruleFeedsFresh: number; ruleQuotesAvailable: number; targetOccurrences: number;
+  };
+  report?: LockedReport;
+};
+type DatasetPartitions = {
+  manifest: PartitionManifest;
+  lockedTest: { source: string; targetOccurrences: number; outcomesHiddenUntilReveal: boolean };
 };
 type Performance = {
   resolved: number; wins: number; losses: number; voids: number; profitUnits: number;
@@ -37,7 +71,7 @@ const initialDefinition: Definition = {
   id: '', name: 'Gol provável após 70 minutos', version: 1,
   conditions: [{ field: 'minute', operator: 'gte', value: 70 }],
   competitionIds: [], additionalGoals: 1, minimumOdds: 1.5,
-  minimumSamples: 500, minimumHoldout: 150, minimumModelEdge: 0.08, enabled: true,
+  minimumSamples: 500, minimumValidation: 150, minimumModelEdge: 0.08, enabled: true,
 };
 
 const fieldLabels: Record<string, string> = {
@@ -60,6 +94,8 @@ export const StrategyLab: React.FC = () => {
   const [invitations, setInvitations] = useState<Invitation[]>([]);
   const [subscribers, setSubscribers] = useState<Subscriber[]>([]);
   const [providerHealth, setProviderHealth] = useState<ProviderHealth | null>(null);
+  const [partitions, setPartitions] = useState<DatasetPartitions | null>(null);
+  const [lockedTests, setLockedTests] = useState<Record<string, LockedTestView>>({});
   const [testChatId, setTestChatId] = useState('');
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
@@ -82,17 +118,27 @@ export const StrategyLab: React.FC = () => {
   const refresh = useCallback(async () => {
     if (!token) return;
     try {
-      const [strategyRows, signalRows, perf, currentSettings, inviteRows, subscriberRows, health] = await Promise.all([
+      const [strategyRows, signalRows, perf, currentSettings, inviteRows, subscriberRows, health, partitionRows] = await Promise.all([
         request('strategies'), request('signals'), request('performance'), request('settings'),
-        request('invitations'), request('subscribers'), request('provider-health'),
+        request('invitations'), request('subscribers'), request('provider-health'), request('dataset-partitions'),
       ]);
-      setStrategies(asArray<StoredStrategy>(strategyRows));
+      const normalizedStrategies = asArray<StoredStrategy>(strategyRows);
+      setStrategies(normalizedStrategies);
       setSignals(asArray<Signal>(signalRows));
       setPerformance(perf);
       setSettings(currentSettings);
       setInvitations(asArray<Invitation>(inviteRows));
       setSubscribers(asArray<Subscriber>(subscriberRows));
       setProviderHealth(health);
+      setPartitions(partitionRows);
+      const lockedEntries = await Promise.all(normalizedStrategies
+        .filter(row => row.lockedTestId)
+        .map(async row => {
+          const key = `${row.definition.id}-${row.definition.version}`;
+          const view = await request(`strategies/${row.definition.id}/versions/${row.definition.version}/locked-test`);
+          return [key, view] as const;
+        }));
+      setLockedTests(Object.fromEntries(lockedEntries));
     } catch (error) { setMessage(String(error)); }
   }, [request, token]);
 
@@ -118,6 +164,7 @@ export const StrategyLab: React.FC = () => {
         method: 'POST', body: JSON.stringify(definition),
       });
       setPreview(result);
+      setDefinition(result.definition);
       setMessage(persist ? 'Nova versão salva e aguardando armação.' : 'Backtest concluído.');
       if (persist) refresh();
     } catch (error) { setMessage(String(error)); } finally { setBusy(false); }
@@ -132,6 +179,43 @@ export const StrategyLab: React.FC = () => {
       await refresh();
     } catch (error) { setMessage(String(error)); } finally { setBusy(false); }
   };
+
+  const seal = async (row: StoredStrategy) => {
+    if (!window.confirm('Selar esta versão? Regras, modelo e limites não poderão ser alterados durante o Locked Test.')) return;
+    setBusy(true); setMessage('');
+    try {
+      await request(`strategies/${row.definition.id}/versions/${row.definition.version}/seal`, { method: 'POST' });
+      setMessage('Versão selada. O teste prospectivo começou sem revelar resultados.');
+      await refresh();
+    } catch (error) { setMessage(String(error)); } finally { setBusy(false); }
+  };
+
+  const reveal = async (row: StoredStrategy) => {
+    if (!window.confirm('Revelar definitivamente o Locked Test? O relatório ficará imutável.')) return;
+    setBusy(true); setMessage('');
+    try {
+      await request(`strategies/${row.definition.id}/versions/${row.definition.version}/reveal`, { method: 'POST' });
+      setMessage('Locked Test revelado e qualificação final registrada.');
+      await refresh();
+    } catch (error) { setMessage(String(error)); } finally { setBusy(false); }
+  };
+
+  const createVersionFrom = (row: StoredStrategy) => {
+    setDefinition({
+      ...row.definition,
+      version: row.definition.version + 1,
+      minimumValidation: row.definition.minimumValidation || row.definition.minimumHoldout || 150,
+      conditions: asArray<Condition>(row.definition.conditions).map(condition => ({ ...condition })),
+      competitionIds: [...asArray<string>(row.definition.competitionIds)],
+    });
+    setPreview(null);
+    setMessage('Nova versão editável criada no construtor. Salve para validar.');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const currentVersion = strategies.find(row =>
+    row.definition.id === definition.id && row.definition.version === definition.version);
+  const editorSealed = Boolean(currentVersion?.lockedTestId);
 
   const saveSettings = async () => {
     if (!settings) return;
@@ -189,13 +273,44 @@ export const StrategyLab: React.FC = () => {
       <div>
         <p className="font-mono text-xs uppercase tracking-wider text-emerald-400">Administração privada</p>
         <h1 className="text-3xl font-semibold mt-1">Strategy Lab</h1>
-        <p className="text-sm text-slate-400 mt-2">Regras AND auditáveis, holdout cronológico e operação do beta no Telegram.</p>
+        <p className="text-sm text-slate-400 mt-2">Regras AND auditáveis, Training/Validation/Locked Test e operação do beta no Telegram.</p>
       </div>
       {message && <div className="border border-white/10 bg-slate-900 rounded-lg px-4 py-3 text-sm">{message}</div>}
+
+      <section className="grid md:grid-cols-3 gap-4">
+        <div className="border border-white/10 rounded-xl p-4 bg-slate-950">
+          <p className="font-mono text-xs uppercase tracking-wider text-sky-400">Training</p>
+          <p className="text-2xl mt-2">{partitions?.manifest.training.matchCount ?? '—'}</p>
+          <p className="text-xs text-slate-500 mt-1">Temporadas históricas anteriores · ajuste do modelo</p>
+          {partitions && <p className="text-[11px] text-slate-500 mt-2">{partitions.manifest.training.earliestKickoff?.slice(0, 10)} → {partitions.manifest.training.latestKickoff?.slice(0, 10)}</p>}
+          {partitions && <p className="font-mono text-[10px] text-slate-600 mt-2 truncate" title={partitions.manifest.training.fixtureIdsSha256}>{partitions.manifest.training.fixtureIdsSha256}</p>}
+        </div>
+        <div className="border border-white/10 rounded-xl p-4 bg-slate-950">
+          <p className="font-mono text-xs uppercase tracking-wider text-amber-400">Validation</p>
+          <p className="text-2xl mt-2">{partitions?.manifest.validation.matchCount ?? '—'}</p>
+          <p className="text-xs text-slate-500 mt-1">Temporada histórica mais recente · ajustes permitidos</p>
+          {partitions && <p className="text-[11px] text-slate-500 mt-2">{partitions.manifest.validation.earliestKickoff?.slice(0, 10)} → {partitions.manifest.validation.latestKickoff?.slice(0, 10)}</p>}
+          {partitions && <p className="font-mono text-[10px] text-slate-600 mt-2 truncate" title={partitions.manifest.validation.fixtureIdsSha256}>{partitions.manifest.validation.fixtureIdsSha256}</p>}
+        </div>
+        <div className="border border-white/10 rounded-xl p-4 bg-slate-950">
+          <p className="font-mono text-xs uppercase tracking-wider text-emerald-400">Locked Test</p>
+          <p className="text-2xl mt-2">{partitions?.lockedTest.targetOccurrences ?? 150} + {partitions?.lockedTest.targetOccurrences ?? 150}</p>
+          <p className="text-xs text-slate-500 mt-1">Partidas futuras · regra e sinal · resultados ocultos até revelar</p>
+          <p className="font-mono text-[10px] text-slate-600 mt-2 truncate" title={partitions?.manifest.sha256}>{partitions?.manifest.sha256 || '—'}</p>
+        </div>
+      </section>
+      {partitions && asArray<string>(partitions.manifest.excludedCompetitionIds).length > 0 && <p className="text-xs text-amber-300">
+        Competições excluídas por não terem duas temporadas: {asArray<string>(partitions.manifest.excludedCompetitionIds).join(', ')}
+      </p>}
 
       <section className="grid lg:grid-cols-[1.4fr_1fr] gap-5">
         <div className="border border-white/10 rounded-xl p-5 bg-slate-950">
           <h2 className="font-semibold">Construtor de estratégia</h2>
+          {editorSealed && <div className="mt-3 rounded-lg bg-amber-500/10 text-amber-300 p-3 text-sm">
+            Esta versão está selada e não pode ser editada.
+            <button onClick={() => currentVersion && createVersionFrom(currentVersion)} className="ml-2 underline">Criar nova versão</button>
+          </div>}
+          <fieldset disabled={editorSealed} className={editorSealed ? 'opacity-60' : ''}>
           <div className="grid sm:grid-cols-2 gap-3 mt-4">
             <label className="text-xs text-slate-400">Nome<input value={definition.name}
               onChange={e => setDefinition({ ...definition, name: e.target.value })}
@@ -237,8 +352,8 @@ export const StrategyLab: React.FC = () => {
               onChange={e => setDefinition({ ...definition, minimumOdds: Number(e.target.value) })} className="mt-1 w-full bg-slate-900 border border-white/10 rounded px-2 py-2" /></label>
             <label className="text-xs text-slate-400">Amostra total<input type="number" value={definition.minimumSamples}
               onChange={e => setDefinition({ ...definition, minimumSamples: Number(e.target.value) })} className="mt-1 w-full bg-slate-900 border border-white/10 rounded px-2 py-2" /></label>
-            <label className="text-xs text-slate-400">Holdout<input type="number" value={definition.minimumHoldout}
-              onChange={e => setDefinition({ ...definition, minimumHoldout: Number(e.target.value) })} className="mt-1 w-full bg-slate-900 border border-white/10 rounded px-2 py-2" /></label>
+            <label className="text-xs text-slate-400">Validação<input type="number" value={definition.minimumValidation}
+              onChange={e => setDefinition({ ...definition, minimumValidation: Number(e.target.value) })} className="mt-1 w-full bg-slate-900 border border-white/10 rounded px-2 py-2" /></label>
             <label className="text-xs text-slate-400">Edge mínimo<input type="number" step=".01" value={definition.minimumModelEdge}
               onChange={e => setDefinition({ ...definition, minimumModelEdge: Number(e.target.value) })} className="mt-1 w-full bg-slate-900 border border-white/10 rounded px-2 py-2" /></label>
           </div>
@@ -246,21 +361,22 @@ export const StrategyLab: React.FC = () => {
             <button disabled={busy} onClick={() => backtest(false)} className="border border-white/15 rounded px-4 py-2 text-sm">Rodar backtest</button>
             <button disabled={busy} onClick={() => backtest(true)} className="bg-emerald-500 text-slate-950 font-semibold rounded px-4 py-2 text-sm">Salvar nova versão</button>
           </div>
+          </fieldset>
         </div>
 
         <div className="border border-white/10 rounded-xl p-5 bg-slate-950">
           <h2 className="font-semibold">Resultado cronológico</h2>
           {!preview ? <p className="text-sm text-slate-500 mt-4">Rode um backtest para ver a qualificação.</p> : <>
-            <div className={`mt-4 rounded-lg p-3 ${preview.report.qualified ? 'bg-emerald-500/10 text-emerald-300' : 'bg-amber-500/10 text-amber-300'}`}>
-              {preview.report.qualified ? 'Qualificada pelos gates históricos' : 'Ainda não qualificada'}
+            <div className={`mt-4 rounded-lg p-3 ${preview.report.validationQualified ? 'bg-emerald-500/10 text-emerald-300' : 'bg-amber-500/10 text-amber-300'}`}>
+              {preview.report.validationQualified ? 'Validação histórica aprovada' : 'Validação ainda bloqueada'}
             </div>
             <div className="grid grid-cols-2 gap-3 mt-4 text-sm">
-              <div><span className="text-slate-500">Total</span><p>{preview.report.allMatches.matchCount} partidas · {pct(preview.report.allMatches.hitRate)}</p></div>
-              <div><span className="text-slate-500">Holdout</span><p>{preview.report.holdout.matchCount} partidas · {pct(preview.report.holdout.hitRate)}</p></div>
-              <div><span className="text-slate-500">Wilson 95%</span><p>{pct(preview.report.holdout.rateLow)}–{pct(preview.report.holdout.rateHigh)}</p></div>
-              <div><span className="text-slate-500">Odd conservadora</span><p>{preview.report.holdout.oddsHigh?.toFixed(2) || '—'}</p></div>
+              <div><span className="text-slate-500">Training</span><p>{preview.report.training.matchCount} partidas · {pct(preview.report.training.hitRate)}</p></div>
+              <div><span className="text-slate-500">Validation</span><p>{preview.report.validation.matchCount} partidas · {pct(preview.report.validation.hitRate)}</p></div>
+              <div><span className="text-slate-500">Wilson Validation 95%</span><p>{pct(preview.report.validation.rateLow)}–{pct(preview.report.validation.rateHigh)}</p></div>
+              <div><span className="text-slate-500">Odd conservadora</span><p>{preview.report.validation.oddsHigh?.toFixed(2) || '—'}</p></div>
             </div>
-            {preview.report.failures?.map(failure => <p key={failure} className="text-xs text-rose-300 mt-2">• {failure}</p>)}
+            {preview.report.validationFailures?.map(failure => <p key={failure} className="text-xs text-rose-300 mt-2">• {failure}</p>)}
           </>}
         </div>
       </section>
@@ -268,16 +384,55 @@ export const StrategyLab: React.FC = () => {
       <section className="border border-white/10 rounded-xl p-5 bg-slate-950">
         <h2 className="font-semibold">Versões e armação</h2>
         <div className="overflow-x-auto mt-3"><table className="w-full text-sm">
-          <thead className="text-left text-slate-500"><tr><th className="py-2">Estratégia</th><th>Mercado</th><th>Amostra</th><th>Holdout</th><th>Estado</th><th /></tr></thead>
+          <thead className="text-left text-slate-500"><tr><th className="py-2">Estratégia</th><th>Mercado</th><th>Training</th><th>Validation</th><th>Estado</th><th /></tr></thead>
           <tbody>{strategies.map(row => <tr key={`${row.definition.id}-${row.definition.version}`} className="border-t border-white/5">
             <td className="py-3">{row.definition.name} <span className="text-slate-600">v{row.definition.version}</span></td>
-            <td>+{row.definition.additionalGoals} gol(s)</td><td>{row.report.allMatches.matchCount}</td><td>{row.report.holdout.matchCount}</td>
-            <td>{row.armed ? 'Armada' : row.report.qualified ? 'Qualificada' : 'Bloqueada'}</td>
-            <td className="text-right"><button disabled={busy || (!row.report.qualified && !row.armed)} onClick={() => arm(row)}
-              className="border border-white/15 disabled:opacity-30 rounded px-3 py-1">{row.armed ? 'Desarmar' : 'Armar'}</button></td>
+            <td>+{row.definition.additionalGoals} gol(s)</td><td>{row.report.training?.matchCount || 0}</td><td>{row.report.validation?.matchCount || 0}</td>
+            <td>{row.armed ? 'ARMED' : row.lockedTestState || (row.report.validationQualified && row.report.modelValidationQualified ? 'VALIDATED' : 'DRAFT')}</td>
+            <td className="text-right space-x-2 whitespace-nowrap">
+              <button disabled={busy} onClick={() => createVersionFrom(row)} className="text-slate-400">Nova versão</button>
+              {row.lockedTestState === 'VALIDATED' && <button disabled={busy} onClick={() => seal(row)}
+                className="border border-amber-400/40 text-amber-300 rounded px-3 py-1">Selar</button>}
+              {row.lockedTestState === 'READY' && <button disabled={busy} onClick={() => reveal(row)}
+                className="border border-emerald-400/40 text-emerald-300 rounded px-3 py-1">Revelar</button>}
+              {(row.lockedTestState === 'REVEALED_PASS' || row.armed) && <button disabled={busy} onClick={() => arm(row)}
+                className="border border-white/15 disabled:opacity-30 rounded px-3 py-1">{row.armed ? 'Desarmar' : 'Armar'}</button>}
+            </td>
           </tr>)}</tbody>
         </table></div>
       </section>
+
+      {strategies.some(row => row.lockedTestId) && <section className="border border-white/10 rounded-xl p-5 bg-slate-950">
+        <h2 className="font-semibold">Locked Tests prospectivos</h2>
+        <div className="grid lg:grid-cols-2 gap-4 mt-4">
+          {strategies.filter(row => row.lockedTestId).map(row => {
+            const locked = lockedTests[`${row.definition.id}-${row.definition.version}`];
+            if (!locked) return null;
+            const revealed = locked.state === 'REVEALED_PASS' || locked.state === 'REVEALED_FAIL';
+            return <div key={locked.id} className="border border-white/10 rounded-lg p-4">
+              <div className="flex justify-between gap-3">
+                <div><p className="font-medium">{row.definition.name} v{row.definition.version}</p>
+                  <p className="font-mono text-[10px] text-slate-600 mt-1">{locked.contractSha256}</p></div>
+                <span className={locked.state === 'REVEALED_PASS' ? 'text-emerald-400' : 'text-amber-300'}>{locked.state}</span>
+              </div>
+              <div className="grid grid-cols-2 gap-3 mt-4 text-sm">
+                <div><span className="text-slate-500">Regra</span><p>{locked.progress.ruleResolved}/{locked.progress.targetOccurrences}</p></div>
+                <div><span className="text-slate-500">Sinais completos</span><p>{locked.progress.signalResolved}/{locked.progress.targetOccurrences}</p></div>
+                <div><span className="text-slate-500">Feed fresco</span><p>{locked.progress.ruleFeedsFresh}/{locked.progress.ruleAccepted}</p></div>
+                <div><span className="text-slate-500">Cotações disponíveis</span><p>{locked.progress.ruleQuotesAvailable}/{locked.progress.ruleAccepted}</p></div>
+                <div><span className="text-slate-500">Anulados</span><p>{locked.progress.voids}</p></div>
+              </div>
+              {!revealed && <p className="text-xs text-slate-500 mt-3">Acertos, erros, probabilidades, Wilson e ROI permanecem ocultos.</p>}
+              {revealed && locked.report && <div className="mt-4 border-t border-white/10 pt-3 text-sm">
+                <p>Regra: {pct(locked.report.rule.hitRate)} · Wilson {pct(locked.report.rule.rateLow)}–{pct(locked.report.rule.rateHigh)}</p>
+                <p>Sinal: {pct(locked.report.signal.hitRate)} · ROI teórico {locked.report.roiPct.toFixed(1)}%</p>
+                <p>Brier modelo/baseline: {locked.report.modelBrier.toFixed(4)} / {locked.report.baselineBrier.toFixed(4)}</p>
+                {locked.report.failures?.map(failure => <p key={failure} className="text-xs text-rose-300 mt-1">• {failure}</p>)}
+              </div>}
+            </div>;
+          })}
+        </div>
+      </section>}
 
       {settings && <section className="grid lg:grid-cols-2 gap-5">
         <div className="border border-white/10 rounded-xl p-5 bg-slate-950">

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/enzotriches/golo/internal/domain"
 )
@@ -36,37 +37,65 @@ type Condition struct {
 
 // StrategyDefinition is the persisted, auditable strategy contract.
 type StrategyDefinition struct {
-	ID               string      `json:"id"`
-	Name             string      `json:"name"`
-	Version          int         `json:"version"`
-	Conditions       []Condition `json:"conditions"`
-	CompetitionIDs   []string    `json:"competitionIds,omitempty"`
-	AdditionalGoals  int         `json:"additionalGoals"`
-	MinimumOdds      float64     `json:"minimumOdds"`
-	MinimumSamples   int         `json:"minimumSamples"`
-	MinimumHoldout   int         `json:"minimumHoldout"`
-	MinimumModelEdge float64     `json:"minimumModelEdge"`
-	Enabled          bool        `json:"enabled"`
+	ID                string      `json:"id"`
+	Name              string      `json:"name"`
+	Version           int         `json:"version"`
+	Conditions        []Condition `json:"conditions"`
+	CompetitionIDs    []string    `json:"competitionIds,omitempty"`
+	AdditionalGoals   int         `json:"additionalGoals"`
+	MinimumOdds       float64     `json:"minimumOdds"`
+	MinimumSamples    int         `json:"minimumSamples"`
+	MinimumValidation int         `json:"minimumValidation"`
+	// MinimumHoldout reads legacy persisted/request JSON. New writes and UI
+	// use MinimumValidation.
+	MinimumHoldout   int     `json:"minimumHoldout,omitempty"`
+	MinimumModelEdge float64 `json:"minimumModelEdge"`
+	Enabled          bool    `json:"enabled"`
 }
 
 type QualificationReport struct {
-	AllMatches          Result   `json:"allMatches"`
-	Holdout             Result   `json:"holdout"`
-	Qualified           bool     `json:"qualified"`
-	Failures            []string `json:"failures"`
-	DatasetMatches      int      `json:"datasetMatches"`
-	HoldoutMatches      int      `json:"holdoutMatches"`
-	RequiredProbability float64  `json:"requiredProbability"`
+	Training   Result `json:"training"`
+	Validation Result `json:"validation"`
+	AllMatches Result `json:"allMatches"`
+	// Holdout remains populated as a read-compatible alias for Validation.
+	Holdout                  Result            `json:"holdout,omitempty"`
+	Partition                PartitionManifest `json:"partition"`
+	ValidationQualified      bool              `json:"validationQualified"`
+	ModelValidationQualified bool              `json:"modelValidationQualified"`
+	Qualified                bool              `json:"qualified"`
+	ValidationFailures       []string          `json:"validationFailures"`
+	Failures                 []string          `json:"failures"`
+	DatasetMatches           int               `json:"datasetMatches"`
+	ValidationMatches        int               `json:"validationMatches"`
+	HoldoutMatches           int               `json:"holdoutMatches,omitempty"`
+	RequiredProbability      float64           `json:"requiredProbability"`
+	LockedTest               *LockedTestReport `json:"lockedTest,omitempty"`
+}
+
+type LockedTestReport struct {
+	Rule             Result    `json:"rule"`
+	Signal           Result    `json:"signal"`
+	ModelBrier       float64   `json:"modelBrier"`
+	BaselineBrier    float64   `json:"baselineBrier"`
+	MarketBrier      float64   `json:"marketBrier"`
+	CalibrationError float64   `json:"calibrationError"`
+	ProfitUnits      float64   `json:"profitUnits"`
+	ROIPct           float64   `json:"roiPct"`
+	MaxDrawdownUnits float64   `json:"maxDrawdownUnits"`
+	QuoteCoverage    float64   `json:"quoteCoverage"`
+	Qualified        bool      `json:"qualified"`
+	Failures         []string  `json:"failures"`
+	RevealedAt       time.Time `json:"revealedAt"`
 }
 
 func DefaultDefinition() StrategyDefinition {
 	return StrategyDefinition{
-		Version:          1,
-		AdditionalGoals:  1,
-		MinimumOdds:      1.50,
-		MinimumSamples:   500,
-		MinimumHoldout:   150,
-		MinimumModelEdge: 0.08,
+		Version:           1,
+		AdditionalGoals:   1,
+		MinimumOdds:       1.50,
+		MinimumSamples:    500,
+		MinimumValidation: 150,
+		MinimumModelEdge:  0.08,
 	}
 }
 
@@ -80,7 +109,7 @@ func (d StrategyDefinition) Validate() error {
 	if d.MinimumOdds < 1.01 {
 		return errors.New("minimumOdds must be at least 1.01")
 	}
-	if d.MinimumSamples < 1 || d.MinimumHoldout < 1 {
+	if d.MinimumSamples < 1 || d.validationMinimum() < 1 {
 		return errors.New("sample requirements must be positive")
 	}
 	if d.MinimumModelEdge < 0 || d.MinimumModelEdge > 1 {
@@ -105,6 +134,13 @@ func (d StrategyDefinition) Validate() error {
 		}
 	}
 	return nil
+}
+
+func (d StrategyDefinition) validationMinimum() int {
+	if d.MinimumValidation > 0 {
+		return d.MinimumValidation
+	}
+	return d.MinimumHoldout
 }
 
 func (d StrategyDefinition) Matches(state State, competitionID string) bool {
@@ -157,31 +193,17 @@ func (c Condition) matches(s State) bool {
 	}
 }
 
-// BacktestDefinition reserves the newest season in each competition as the
-// chronological holdout and never uses repeated minutes as observations.
+// BacktestDefinition exposes the already-inspected newest season as
+// Validation. It never calls that data a final test: production qualification
+// requires a separately sealed prospective Locked Test.
 func BacktestDefinition(def StrategyDefinition, matches []MatchTimeline) (QualificationReport, error) {
 	if err := def.Validate(); err != nil {
 		return QualificationReport{}, err
 	}
-	filtered := make([]MatchTimeline, 0, len(matches))
-	for _, match := range matches {
-		if len(def.CompetitionIDs) == 0 || contains(def.CompetitionIDs, match.CompetitionID) {
-			filtered = append(filtered, match)
-		}
-	}
-
-	latest := map[string]string{}
-	for _, match := range filtered {
-		if match.Season > latest[match.CompetitionID] {
-			latest[match.CompetitionID] = match.Season
-		}
-	}
-	holdout := make([]MatchTimeline, 0)
-	for _, match := range filtered {
-		if match.Season == latest[match.CompetitionID] {
-			holdout = append(holdout, match)
-		}
-	}
+	trainingRows, validationRows, manifest := PartitionTimelines(matches)
+	trainingRows = filterCompetitions(trainingRows, def.CompetitionIDs)
+	validationRows = filterCompetitions(validationRows, def.CompetitionIDs)
+	filtered := append(append(make([]MatchTimeline, 0, len(trainingRows)+len(validationRows)), trainingRows...), validationRows...)
 
 	sc := Scenario{
 		Name:            def.Name,
@@ -198,30 +220,48 @@ func BacktestDefinition(def StrategyDefinition, matches []MatchTimeline) (Qualif
 			return true
 		},
 	}
+	trainingResult := Evaluate(sc, trainingRows)
+	validationResult := Evaluate(sc, validationRows)
 	allResult := Evaluate(sc, filtered)
-	holdoutResult := Evaluate(sc, holdout)
 	required := 1 / def.MinimumOdds
 
-	var failures []string
+	validationFailures := make([]string, 0)
 	if allResult.MatchCount < def.MinimumSamples {
-		failures = append(failures, fmt.Sprintf("amostra total %d < %d", allResult.MatchCount, def.MinimumSamples))
+		validationFailures = append(validationFailures, fmt.Sprintf("amostra total %d < %d", allResult.MatchCount, def.MinimumSamples))
 	}
-	if holdoutResult.MatchCount < def.MinimumHoldout {
-		failures = append(failures, fmt.Sprintf("holdout %d < %d", holdoutResult.MatchCount, def.MinimumHoldout))
+	if validationResult.MatchCount < def.validationMinimum() {
+		validationFailures = append(validationFailures, fmt.Sprintf("validação %d < %d", validationResult.MatchCount, def.validationMinimum()))
 	}
-	if holdoutResult.RateLow <= required {
-		failures = append(failures, fmt.Sprintf("limite inferior %.3f <= equilíbrio %.3f", holdoutResult.RateLow, required))
+	if validationResult.RateLow <= required {
+		validationFailures = append(validationFailures, fmt.Sprintf("limite inferior de validação %.3f <= equilíbrio %.3f", validationResult.RateLow, required))
 	}
-	sort.Strings(failures)
+	if len(manifest.ExcludedCompetitionIDs) > 0 && len(trainingRows)+len(validationRows) == 0 {
+		validationFailures = append(validationFailures, "nenhuma competição possui duas temporadas elegíveis")
+	}
+	sort.Strings(validationFailures)
+	failures := append([]string(nil), validationFailures...)
+	failures = append(failures, "teste bloqueado ainda não revelado")
 	return QualificationReport{
-		AllMatches:          allResult,
-		Holdout:             holdoutResult,
-		Qualified:           len(failures) == 0,
-		Failures:            failures,
-		DatasetMatches:      len(filtered),
-		HoldoutMatches:      len(holdout),
-		RequiredProbability: required,
+		Training: trainingResult, Validation: validationResult,
+		AllMatches: allResult, Holdout: validationResult, Partition: manifest,
+		ValidationQualified: len(validationFailures) == 0,
+		Qualified:           false, ValidationFailures: validationFailures, Failures: failures,
+		DatasetMatches: len(filtered), ValidationMatches: len(validationRows),
+		HoldoutMatches: len(validationRows), RequiredProbability: required,
 	}, nil
+}
+
+func filterCompetitions(matches []MatchTimeline, competitionIDs []string) []MatchTimeline {
+	if len(competitionIDs) == 0 {
+		return matches
+	}
+	filtered := make([]MatchTimeline, 0, len(matches))
+	for _, match := range matches {
+		if contains(competitionIDs, match.CompetitionID) {
+			filtered = append(filtered, match)
+		}
+	}
+	return filtered
 }
 
 func contains(values []string, wanted string) bool {

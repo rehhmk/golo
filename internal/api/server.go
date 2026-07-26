@@ -38,6 +38,7 @@ type Server struct {
 	datasetPath    string
 	allowedOrigin  string
 	providerHealth func() any
+	modelContract  signals.ModelContract
 	loginMu        sync.Mutex
 	loginAttempts  map[string][]time.Time
 }
@@ -57,6 +58,7 @@ type AdminDependencies struct {
 	DatasetPath    string
 	AllowedOrigin  string
 	ProviderHealth func() any
+	ModelContract  signals.ModelContract
 }
 
 func NewServerWithAdmin(store *eventstore.SQLiteStore, pub *publisher.Publisher, replayCtrl ReplayController, modelVersion string, deps AdminDependencies) *Server {
@@ -68,8 +70,8 @@ func NewServerWithAdmin(store *eventstore.SQLiteStore, pub *publisher.Publisher,
 		modelVersion: modelVersion,
 		adminAuth:    deps.Auth, telegram: deps.Telegram, signalEngine: deps.SignalEngine,
 		datasetPath: deps.DatasetPath, allowedOrigin: deps.AllowedOrigin,
-		providerHealth: deps.ProviderHealth,
-		loginAttempts:  make(map[string][]time.Time),
+		providerHealth: deps.ProviderHealth, modelContract: deps.ModelContract,
+		loginAttempts: make(map[string][]time.Time),
 	}
 
 	// Listen to publisher updates to maintain an in-memory cache of live matches

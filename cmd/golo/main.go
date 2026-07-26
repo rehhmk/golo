@@ -73,10 +73,16 @@ func main() {
 	if err := store.SaveSignalSettings(signalSettings); err != nil {
 		log.Fatalf("Failed to save signal settings: %v", err)
 	}
+	modelContract := signals.ModelContract{
+		ModelVersion: predEngine.ModelVersion(), ModelSHA256: predEngine.SHA256(),
+		FeatureVersion:   predEngine.FeatureVersion(),
+		OneGoalQualified: predEngine.AlertQualified(1), TwoGoalQualified: predEngine.AlertQualified(2),
+		BaselineGoalsPer90: predEngine.BaselineGoalsPer90(),
+	}
 	signalEngine := signals.NewEngine(store, tg, signalSettings, map[int]bool{
 		1: predEngine.AlertQualified(1),
 		2: predEngine.AlertQualified(2),
-	}, cfg.AlertEngineEnabled, cfg.TelegramEnabled)
+	}, modelContract, predEngine.BaselineProbability, cfg.AlertEngineEnabled, cfg.TelegramEnabled)
 	oddsState := &liveOddsCache{provider: "not configured"}
 	if cfg.OddsAPIKey != "" {
 		var oddsProvider odds.Provider
@@ -106,7 +112,7 @@ func main() {
 	server := api.NewServerWithAdmin(store, pub, nil, predEngine.ModelVersion(), api.AdminDependencies{
 		Auth: admin, Telegram: tg, SignalEngine: signalEngine,
 		DatasetPath: cfg.HistoricalDatasetPath, AllowedOrigin: cfg.AllowedWebOrigin,
-		ProviderHealth: oddsState.Health,
+		ProviderHealth: oddsState.Health, ModelContract: modelContract,
 	})
 
 	go func() {
@@ -251,10 +257,9 @@ func runIngestionLoop(
 					log.Printf("Failed to save prediction: %v", err)
 				}
 				if signalEngine != nil {
-					if matched, err := odds.MatchEvent(m, state, oddsState.Events()); err == nil {
-						if err := signalEngine.Evaluate(ctx, m, state, pred, matched); err != nil {
-							log.Printf("Signal evaluation failed for %s: %v", m.ID, err)
-						}
+					matched, _ := odds.MatchEvent(m, state, oddsState.Events())
+					if err := signalEngine.Evaluate(ctx, m, state, pred, matched); err != nil {
+						log.Printf("Signal evaluation failed for %s: %v", m.ID, err)
 					}
 					if err := signalEngine.Settle(ctx, state); err != nil {
 						log.Printf("Signal settlement failed for %s: %v", m.ID, err)

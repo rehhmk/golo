@@ -35,7 +35,9 @@
   "trainedUntil": "2026-07-26",
   "trainingMatches": 3282,
   "validation": {
+    "validationMatches": 579,
     "holdoutMatches": 579,
+    "baselineGoalsPer90": 2.45913344,
     "oneGoalBrier": 0.15129824,
     "oneGoalBaselineBrier": 0.15104114,
     "twoGoalBrier": 0.18083476,
@@ -43,6 +45,6 @@
     "oneGoalQualified": false,
     "twoGoalQualified": false
   },
-  "notes": "Base rate and the match_second / abs_score_diff / goals_so_far / red-card terms are fitted by Poisson regression on 3282 historical matches, validated on a held-out most-recent season per league. Only 0 matches contained a usable timestamped activity timeline (minimum 500); centered documented priors remain active. Activity values are centered so ordinary activity leaves the fitted intensity unchanged. xG remains zero when unavailable.",
-  "sha256": "9b036f12e7872f97b6293a83f9cb5b29564f6d355c491fd8b19cb10364202bcd"
+  "notes": "Base rate and the match_second / abs_score_diff / goals_so_far / red-card terms are fitted by Poisson regression on 3282 historical matches, validated on the already-inspected most-recent season per league. Only 0 matches contained a usable timestamped activity timeline (minimum 500); centered documented priors remain active. Activity values are centered so ordinary activity leaves the fitted intensity unchanged. xG remains zero when unavailable.",
+  "sha256": "f15cf3d7a3edc870f8d34f40b06cb79596f83376f11991fd578aaad2c4ee292a"
 }
