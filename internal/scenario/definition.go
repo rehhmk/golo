@@ -162,6 +162,11 @@ type Report struct {
 	Definition  Definition `json:"definition"`
 	Description string     `json:"description"`
 
+	// MatchesConsidered is how many matches were in scope after the competition
+	// filter. Without it a filtered result is read against the full dataset
+	// size shown elsewhere, which overstates the evidence behind it.
+	MatchesConsidered int `json:"matchesConsidered"`
+
 	Occurrences int     `json:"occurrences"`
 	Wins        int     `json:"wins"`
 	HitRate     float64 `json:"hitRate"`
@@ -229,6 +234,7 @@ func Run(def Definition, matches []MatchTimeline, drawdown float64) (Report, err
 	report := Report{
 		Definition:        def,
 		Description:       def.Describe(),
+		MatchesConsidered: len(scoped),
 		Occurrences:       result.Occurrences,
 		Wins:              result.Wins,
 		HitRate:           result.HitRate,

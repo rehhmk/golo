@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils';
 interface ScenarioReport {
   definition: { targetOdds: number };
   description: string;
+  matchesConsidered: number;
   occurrences: number;
   wins: number;
   hitRate: number;
@@ -23,9 +24,16 @@ interface ScenarioReport {
   verdict: string;
 }
 
+interface Competition {
+  id: string;
+  name: string;
+  matches: number;
+}
+
 interface DatasetInfo {
   matches: number;
   goals: number;
+  competitions: Competition[];
 }
 
 // The builder deals in optional conditions, so every field is a string that
@@ -38,6 +46,8 @@ interface Draft {
   redCards: boolean;
   horizonMinutes: string;
   targetOdds: string;
+  /** Empty means every competition — the backend reads it the same way. */
+  competitionIds: string[];
 }
 
 const EMPTY_DRAFT: Draft = {
@@ -48,6 +58,7 @@ const EMPTY_DRAFT: Draft = {
   redCards: false,
   horizonMinutes: '0',
   targetOdds: '1,50',
+  competitionIds: [],
 };
 
 function numberOrUndefined(value: string): number | undefined {
@@ -68,6 +79,7 @@ function buildPayload(draft: Draft) {
     redCardsAtLeast: draft.redCards ? 1 : undefined,
     horizonMinutes: numberOrUndefined(draft.horizonMinutes) ?? 0,
     targetOdds: numberOrUndefined(draft.targetOdds) ?? 0,
+    competitionIds: draft.competitionIds.length > 0 ? draft.competitionIds : undefined,
   };
 }
 
@@ -191,6 +203,59 @@ export const ScenarioLab: React.FC = () => {
             <span className="text-[12px] text-slate-400">Com alguém expulso</span>
           </label>
 
+          {dataset && dataset.competitions.length > 1 && (
+            <div className="mb-4 pt-3 border-t border-white/[0.06]">
+              <div className="flex items-baseline justify-between mb-2">
+                <span className="text-[12px] text-slate-400">Competições</span>
+                {draft.competitionIds.length > 0 && (
+                  <button
+                    onClick={() => setDraft({ ...draft, competitionIds: [] })}
+                    className="text-[11px] text-slate-500 hover:text-slate-300"
+                  >
+                    todas
+                  </button>
+                )}
+              </div>
+              <div className="space-y-1 max-h-44 overflow-y-auto pr-1">
+                {dataset.competitions.map((c) => {
+                  const selected =
+                    draft.competitionIds.length === 0 || draft.competitionIds.includes(c.id);
+                  return (
+                    <label key={c.id} className="flex items-center gap-2 cursor-pointer group">
+                      <input
+                        type="checkbox"
+                        checked={selected}
+                        onChange={() => {
+                          // An empty list means "all", so the first tick has to
+                          // materialise the full list before removing one —
+                          // otherwise unticking one league would read as
+                          // selecting only that league.
+                          const current =
+                            draft.competitionIds.length === 0
+                              ? dataset.competitions.map((x) => x.id)
+                              : draft.competitionIds;
+                          const next = current.includes(c.id)
+                            ? current.filter((id) => id !== c.id)
+                            : [...current, c.id];
+                          setDraft({
+                            ...draft,
+                            competitionIds: next.length === dataset.competitions.length ? [] : next,
+                          });
+                        }}
+                      />
+                      <span className="text-[12px] text-slate-400 group-hover:text-slate-300 flex-1 truncate">
+                        {c.name}
+                      </span>
+                      <span className="text-[11px] font-mono tabular-nums text-slate-600">
+                        {c.matches.toLocaleString('pt-BR')}
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           <p className="text-[12px] uppercase tracking-wider text-slate-500 mb-2 pt-3 border-t border-white/[0.06]">
             Espera-se
           </p>
@@ -284,7 +349,12 @@ const ReportView: React.FC<{ report: ScenarioReport; pct: (v: number) => string 
         </p>
       </div>
 
-      <p className="text-[12px] text-slate-500 font-mono">{report.description}</p>
+      <p className="text-[12px] text-slate-500 font-mono">
+        {report.description}
+        <span className="text-slate-600">
+          {' '}· medido em {report.matchesConsidered.toLocaleString('pt-BR')} partidas
+        </span>
+      </p>
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-px bg-white/[0.06] border border-white/[0.06] rounded-md overflow-hidden">
         <Cell label="Acerto" value={pct(report.hitRate)} />

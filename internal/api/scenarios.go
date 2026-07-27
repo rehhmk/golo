@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"sort"
 	"sync"
 
 	"github.com/enzotriches/golo/internal/scenario"
@@ -94,12 +95,30 @@ func (s *Server) handleScenarioDataset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	competitions := make(map[string]int)
+	counts := make(map[string]int)
 	goals := 0
 	for _, m := range matches {
-		competitions[m.CompetitionID]++
+		counts[m.CompetitionID]++
 		goals += len(m.Goals)
 	}
+
+	type competition struct {
+		ID      string `json:"id"`
+		Name    string `json:"name"`
+		Matches int    `json:"matches"`
+	}
+	competitions := make([]competition, 0, len(counts))
+	for id, n := range counts {
+		competitions = append(competitions, competition{ID: id, Name: scenario.CompetitionName(id), Matches: n})
+	}
+	// Largest first: the picker should lead with the competitions that carry
+	// enough matches to support a verdict.
+	sort.Slice(competitions, func(i, j int) bool {
+		if competitions[i].Matches != competitions[j].Matches {
+			return competitions[i].Matches > competitions[j].Matches
+		}
+		return competitions[i].ID < competitions[j].ID
+	})
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
