@@ -62,7 +62,7 @@ RED_FEATURE = "abs_red_diff"
 # Activity priors. Not fitted — see the module docstring. The values are
 # intensity multipliers per unit above the typical rate.
 ACTIVITY_PRIORS = {
-    "shots_10m_total": 0.06,
+    "shots_off_target_10m_total": 0.04,
     "shots_on_target_10m_total": 0.12,
     "corners_10m_total": 0.03,
     "dangerous_attacks_10m_total": 0.008,
@@ -74,7 +74,7 @@ MIN_ACTIVITY_MATCHES = 500
 # Derived from routine full-match totals (both teams combined): ~21 shots,
 # ~7 on target, ~10 corners, ~65 dangerous attacks over ~95 minutes.
 DEFAULT_ACTIVITY_CENTERS = {
-    "shots_10m_total": 2.2,
+    "shots_off_target_10m_total": 1.45,
     "shots_on_target_10m_total": 0.75,
     "corners_10m_total": 1.05,
     "dangerous_attacks_10m_total": 6.8,
@@ -224,7 +224,7 @@ class FittedHazard:
         return np.exp(self.intercept + X @ beta)
 
 
-def fit(df_train, activity_features=None):
+def fit(df_train, activity_features=None, quiet=False):
     requested = FEATURES + [RED_FEATURE] + list(activity_features or [])
 
     # Drop covariates that never vary. A column of constant zeros carries no
@@ -249,7 +249,7 @@ def fit(df_train, activity_features=None):
             names.append(name)
         else:
             dropped.append(name)
-    if dropped:
+    if dropped and not quiet:
         print(f"  dropped constant features (kept at prior): {', '.join(dropped)}")
     if not names:
         raise RuntimeError("every covariate is constant; nothing to fit")
@@ -328,6 +328,47 @@ def metrics(probs, labels):
         "mean_pred": float(p.mean()),
         "base_rate": float(labels.mean()),
     }
+
+
+def coefficient_stability(df, activity_features, draws=8, seed=11):
+    """Refit on random subsets and report how much each coefficient moves.
+
+    A coefficient estimating a real effect stays put when the sample changes a
+    little. One that reorders itself is following noise, and reporting it as a
+    finding would dress up randomness as football.
+
+    This is not hypothetical here: with overlapping shot counters removed, the
+    training fit put a shot on target at twice the weight of one that missed
+    (+0.0256 against +0.0126), while refitting on the full set reversed the
+    order (+0.0134 against +0.0156). Adding a fifth more data should not change
+    which of two effects is larger.
+    """
+    rng = np.random.default_rng(seed)
+    names = FEATURES + [RED_FEATURE] + list(activity_features or [])
+    fixtures = df["fixture_id"].unique()
+
+    samples = {name: [] for name in names}
+    for _ in range(draws):
+        chosen = rng.choice(fixtures, size=int(len(fixtures) * 0.8), replace=False)
+        subset = df[df["fixture_id"].isin(chosen)]
+        try:
+            model = fit(subset, activity_features, quiet=True)
+        except RuntimeError:
+            continue
+        for name, value in model.coefficients.items():
+            samples[name].append(value)
+
+    report = {}
+    for name, values in samples.items():
+        if len(values) < 2:
+            continue
+        low, high = min(values), max(values)
+        report[name] = {
+            "min": float(low),
+            "max": float(high),
+            "sign_stable": bool((low > 0) == (high > 0)),
+        }
+    return report
 
 
 def brier_advantage(fitted_probs, constant_probs, labels, fixture_ids, draws=2000, seed=7):
@@ -519,6 +560,16 @@ def main():
     one_qualified = advantage["ft"][2] < 0
     two_qualified = advantage["two_ft"][2] < 0
 
+    stability = coefficient_stability(df_train, activity_features)
+    unstable = [n for n, s in stability.items() if not s["sign_stable"]]
+    print()
+    print("estabilidade dos coeficientes (refit em 8 subconjuntos de 80%):")
+    for name, s in stability.items():
+        flag = "" if s["sign_stable"] else "  <- TROCA DE SINAL"
+        print(f"  {name:28s} [{s['min']:+.5f}, {s['max']:+.5f}]{flag}")
+    if unstable:
+        print(f"  {len(unstable)} coeficiente(s) trocam de sinal — o efeito nao e distinguivel de ruido")
+
     print()
     print("vantagem sobre a taxa constante (bootstrap por partida, negativo = melhor):")
     for key in ("ft", "two_ft"):
@@ -564,8 +615,8 @@ def main():
         )
 
     artifact = {
-        "modelVersion": "hazard_v1.2.0",
-        "featureVersion": "v1.2.0",
+        "modelVersion": "hazard_v1.3.0",
+        "featureVersion": "v1.3.0",
         "modelType": "poisson_hazard",
         "baseGoalsPer90": round(final_base, 6),
         "competitionBaseGoalsPer90": competition_rates,
@@ -591,6 +642,16 @@ def main():
             "twoGoalBaselineBrier": round(summary["two_ft"]["constant"]["brier"], 8),
             "oneGoalQualified": bool(one_qualified),
             "twoGoalQualified": bool(two_qualified),
+            "coefficientStability": {
+                name: {
+                    "min": round(s["min"], 8),
+                    "max": round(s["max"], 8),
+                    # numpy returns its own bool type from a comparison, which the
+            # json module refuses to encode.
+            "signStable": bool(s["sign_stable"]),
+                }
+                for name, s in stability.items()
+            },
             "brierAdvantage": {
                 key: {
                     "meanDelta": round(advantage[key][0], 8),

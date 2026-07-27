@@ -101,6 +101,19 @@ func (fe *FeatureEngine) ExtractFeatures(state domain.MatchState) (map[string]fl
 		feats["shots_on_target_"+wKey+"_away"] = float64(ws.Away.ShotsOnTarget)
 		feats["shots_on_target_"+wKey+"_total"] = float64(ws.Home.ShotsOnTarget + ws.Away.ShotsOnTarget)
 
+		// Shots that missed, counted separately from those on target so the two
+		// are disjoint. Overlapping counters (all shots plus on-target shots)
+		// correlate at 0.61 and the fit splits one effect across both with
+		// opposite signs, which had the model rating a shot on target as
+		// *less* dangerous than one that missed.
+		onTarget := ws.Home.ShotsOnTarget + ws.Away.ShotsOnTarget
+		allShots := ws.Home.Shots + ws.Away.Shots
+		offTarget := allShots - onTarget
+		if offTarget < 0 {
+			offTarget = 0
+		}
+		feats["shots_off_target_"+wKey+"_total"] = float64(offTarget)
+
 		feats["xg_"+wKey+"_home"] = ws.Home.XG
 		feats["xg_"+wKey+"_away"] = ws.Away.XG
 		feats["xg_"+wKey+"_total"] = ws.Home.XG + ws.Away.XG

@@ -1,7 +1,7 @@
 import React from 'react';
 import { cn } from '@/lib/utils';
 
-export type ActiveTab = 'live' | 'detail' | 'replay' | 'analytics' | 'howitworks' | 'strategies';
+export type ActiveTab = 'live' | 'detail' | 'replay' | 'analytics' | 'howitworks' | 'strategies' | 'lab';
 
 interface NavbarProps {
   activeTab: ActiveTab;
@@ -12,6 +12,7 @@ interface NavbarProps {
 
 const NAV_ITEMS: { key: ActiveTab; label: string }[] = [
   { key: 'live', label: 'Ao vivo' },
+  { key: 'lab', label: 'Testar cenário' },
   { key: 'replay', label: 'Replay' },
   { key: 'analytics', label: 'Analytics' },
   { key: 'strategies', label: 'Strategy Lab' },

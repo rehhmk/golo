@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Navbar, ActiveTab } from './components/Navbar';
 import { LiveBoard } from './components/LiveBoard';
+import { ScenarioLab } from './components/ScenarioLab';
 import { MatchDetail } from './components/MatchDetail';
 import { ReplayControl } from './components/ReplayControl';
 import { EvaluationDashboard } from './components/EvaluationDashboard';
@@ -150,7 +151,9 @@ export const App: React.FC = () => {
 
         {activeTab === 'howitworks' && <HowItWorks />}
 
-        {activeTab === 'analytics' && <EvaluationDashboard matches={matches} />}
+        {activeTab === 'lab' && <ScenarioLab />}
+
+      {activeTab === 'analytics' && <EvaluationDashboard matches={matches} />}
 
         {activeTab === 'strategies' && <StrategyLab />}
       </main>

@@ -31,10 +31,25 @@ BASE_URL = "https://api.sportmonks.com/v3/football"
 
 # Verified against /leagues on the current plan (2026-07-26).
 LEAGUES = {
+    # The four the live engine follows.
     648: "Brasileirao Serie A",
     1122: "Copa Libertadores",
     779: "Major League Soccer",
     743: "Liga MX",
+    # Everything else the plan covers. These add roughly eight times the
+    # volume — Champions and Europa League carry 27 seasons each — which is
+    # what the coefficient stability sweep needs: at 3,287 matches, the red
+    # card, corner and goals-so-far terms all change sign under an 80%
+    # resample, so they are indistinguishable from noise. More matches either
+    # settles them into real effects or removes them for good.
+    #
+    # Competition is already a stratum in the trainer, so mixing a European
+    # goal rate with a South American one does not contaminate the base rate.
+    2: "Champions League",
+    5: "Europa League",
+    271: "Superliga",
+    1328: "UEFA Super Cup",
+    2286: "Europa Conference League",
 }
 
 # SportMonks state_id values that mean "this match was played to a finish".
@@ -73,11 +88,19 @@ RAW_SCHEMA = "v2-timeline"
 # matching internal/reducer, where EventShotOnTarget satisfies both
 # IsShotEvent() and IsOnTarget().
 ACTIVITY_KINDS = {
-    "SHOT_ON_TARGET": ("shots_10m_total", "shots_on_target_10m_total"),
-    "SHOT_OFF_TARGET": ("shots_10m_total",),
-    "SHOT_BLOCKED": ("shots_10m_total",),
+    "SHOT_ON_TARGET": ("shots_on_target_10m_total",),
+    "SHOT_OFF_TARGET": ("shots_off_target_10m_total",),
+    "SHOT_BLOCKED": ("shots_off_target_10m_total",),
     "CORNER": ("corners_10m_total",),
 }
+
+# The shot counters are deliberately disjoint. Counting an on-target shot in
+# both a total and an on-target column made the two columns correlate at 0.61,
+# and the fit responded by splitting the effect between them with opposite
+# signs: shots +0.0135 and shots_on_target -0.0031. Read literally the model
+# then claimed a shot on target raises the goal rate *less* than a shot that
+# missed, which is not a finding about football but an artifact of asking a
+# regression to attribute one event to two overlapping variables.
 
 # Dangerous attacks are deliberately absent: SportMonks publishes them only as
 # a cumulative fixture statistic, never as a timestamped timeline entry, so no
