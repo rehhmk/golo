@@ -1,7 +1,7 @@
 import React from 'react';
 import { cn } from '@/lib/utils';
 
-export type ActiveTab = 'live' | 'detail' | 'replay' | 'analytics' | 'howitworks' | 'strategies' | 'lab';
+export type ActiveTab = 'live' | 'detail' | 'analytics' | 'howitworks' | 'strategies' | 'lab';
 
 interface NavbarProps {
   activeTab: ActiveTab;
@@ -13,7 +13,6 @@ interface NavbarProps {
 const NAV_ITEMS: { key: ActiveTab; label: string }[] = [
   { key: 'live', label: 'Ao vivo' },
   { key: 'lab', label: 'Testar cenário' },
-  { key: 'replay', label: 'Replay' },
   { key: 'analytics', label: 'Analytics' },
   { key: 'strategies', label: 'Strategy Lab' },
   { key: 'howitworks', label: 'Como funciona' },
@@ -60,15 +59,15 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, isLiveC
               <span className="text-slate-300">{Math.round(hitRatePct)}%</span>
             </span>
           )}
-          <span className="flex items-center gap-1.5" title={isLiveConnected ? 'Conectado ao motor ao vivo' : 'Sem conexão — exibindo dados de demonstração'}>
+          <span className="flex items-center gap-1.5" title={isLiveConnected ? 'Conectado ao motor ao vivo' : 'Sem conexão com o servidor — o que estiver na tela pode estar desatualizado'}>
             <span
               className={cn(
                 'w-1.5 h-1.5 rounded-full',
                 isLiveConnected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'
               )}
             />
-            <span className={cn('uppercase tracking-wider hidden sm:inline', isLiveConnected ? 'text-slate-500' : 'text-amber-400/80')}>
-              {isLiveConnected ? 'Live' : 'Demo'}
+            <span className={cn('uppercase tracking-wider', isLiveConnected ? 'text-slate-500 hidden sm:inline' : 'text-amber-400/80')}>
+              {isLiveConnected ? 'Ao vivo' : 'Sem conexão'}
             </span>
           </span>
         </div>

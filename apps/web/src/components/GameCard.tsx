@@ -16,6 +16,21 @@ const TIER_STYLES: Record<Tier, { text: string; accent: string; rule: string }> 
   low: { text: 'text-slate-300', accent: 'bg-slate-700', rule: 'text-slate-500' },
 };
 
+// The provider grades how good the incoming data is, not how sure the model
+// is about football. Printing the raw enum invited the opposite reading.
+function confidenceLabel(band: string): string {
+  switch (band) {
+    case 'HIGH':
+      return 'bons';
+    case 'MEDIUM':
+      return 'medianos';
+    case 'LOW':
+      return 'fracos';
+    default:
+      return band.toLowerCase();
+  }
+}
+
 export const GameCard: React.FC<GameCardProps> = ({ matchUpdate, onSelect, history = [] }) => {
   const { state, prediction, trackRecord } = matchUpdate;
 
@@ -49,8 +64,11 @@ export const GameCard: React.FC<GameCardProps> = ({ matchUpdate, onSelect, histo
             <span className="font-mono text-[11px] tabular-nums text-rose-400 shrink-0">{minute}&apos;</span>
             <span className="text-[11px] text-slate-500 truncate">{competitionLabel(state)}</span>
           </div>
-          <span className="font-mono text-[10px] uppercase tracking-wider text-slate-600 shrink-0">
-            {prediction.confidenceBand}
+          <span
+            className="font-mono text-[10px] uppercase tracking-wider text-slate-600 shrink-0"
+            title="Qualidade dos dados recebidos desta partida — não a confiança na previsão"
+          >
+            dados: {confidenceLabel(prediction.confidenceBand)}
           </span>
         </div>
 
@@ -70,9 +88,9 @@ export const GameCard: React.FC<GameCardProps> = ({ matchUpdate, onSelect, histo
           <div className="min-w-0">
             <div className="font-mono text-[10px] uppercase tracking-wider text-slate-500 mb-0.5">Gol · 10 min</div>
             <div className="flex items-baseline gap-2 font-mono text-[11px] tabular-nums text-slate-500">
-              <span>5m {prob5m}%</span>
+              <span>5min {prob5m}%</span>
               <span className="text-slate-700">·</span>
-              <span>FT {probFT}%</span>
+              <span>até o fim {probFT}%</span>
             </div>
           </div>
           <div className={cn('font-mono text-[2rem] leading-none font-semibold tabular-nums', styles.text)}>
@@ -83,19 +101,20 @@ export const GameCard: React.FC<GameCardProps> = ({ matchUpdate, onSelect, histo
 
         {/* Supporting stats — quiet, inline, no boxes */}
         <div className="mt-3.5 pt-3 border-t border-white/[0.06] flex items-center justify-between gap-2 font-mono text-[11px] tabular-nums text-slate-500">
-          <span>
-            xG <span className="text-slate-300">{xgTotal}</span>
+          <span title="Chutes no alvo nos últimos 10 minutos, somando os dois times">
+            no alvo <span className="text-slate-300">{shotsOnTarget}</span>
           </span>
-          <span>
-            CA <span className="text-slate-300">{shotsOnTarget}</span>
+          <span title="Escanteios nos últimos 10 minutos, somando os dois times">
+            escanteios <span className="text-slate-300">{corners}</span>
           </span>
-          <span>
-            ESC <span className="text-slate-300">{corners}</span>
-          </span>
-          {hasRedCard && <span className="text-rose-400">VERM</span>}
+          {hasRedCard && (
+            <span className="text-rose-400" title="Há jogador expulso em campo">
+              expulsão
+            </span>
+          )}
           {trackRecord && trackRecord.resolvedCount > 0 && (
-            <span title="Acerto das nossas previsões de 10 min nesta partida">
-              ACERTO <span className="text-slate-300">{Math.round(trackRecord.accuracyPct)}%</span>
+            <span title={`Das nossas previsões de 10 minutos nesta partida que já se resolveram, ${Math.round(trackRecord.accuracyPct)}% acertaram (${trackRecord.resolvedCount} resolvidas)`}>
+              acerto aqui <span className="text-slate-300">{Math.round(trackRecord.accuracyPct)}%</span>
             </span>
           )}
         </div>
