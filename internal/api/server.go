@@ -95,6 +95,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/matches/", s.handleMatchDetail)
 	mux.HandleFunc("/api/replay/control", s.handleReplayControl)
 	mux.HandleFunc("/api/metrics", s.handleMetrics)
+	mux.HandleFunc("/api/scenarios/backtest", s.handleScenarioBacktest)
+	mux.HandleFunc("/api/scenarios/dataset", s.handleScenarioDataset)
 	mux.HandleFunc("/api/admin/login", s.handleAdminLogin)
 	mux.Handle("/api/admin/", s.requireAdmin(http.HandlerFunc(s.handleAdmin)))
 	mux.HandleFunc("/api/telegram/webhook", s.handleTelegramWebhook)
