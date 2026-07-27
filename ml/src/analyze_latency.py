@@ -119,12 +119,19 @@ def analyse_goal(goal, odds_rows):
     if not series:
         return None
 
+    # A price series is only comparable within one line. Bookmakers quote
+    # several totals simultaneously — Pinnacle carried Over 2.25, 2.5 and 2.75
+    # at the same instant — and they also move the line itself after a goal.
+    # Grouping by bookmaker alone compares Over 2.5 before the goal against
+    # Over 3.5 after it and reads the difference as a repricing delay. That is
+    # what produced an apparent 143-second median window on the first run.
     by_bookmaker = {}
     for row in series:
-        by_bookmaker.setdefault(row["bookmaker"], []).append(row)
+        key = (row["bookmaker"], row.get("point"))
+        by_bookmaker.setdefault(key, []).append(row)
 
     results = []
-    for bookmaker, rows in by_bookmaker.items():
+    for (bookmaker, point), rows in by_bookmaker.items():
         rows.sort(key=lambda r: r["observed_at"])
         before = [r for r in rows if parse(r["observed_at"]) <= detected]
         after = [r for r in rows if parse(r["observed_at"]) > detected]
@@ -133,10 +140,14 @@ def analyse_goal(goal, odds_rows):
 
         baseline = before[-1]["price"]
         for row in after:
-            if abs(row["price"] - baseline) >= MATERIAL_MOVE:
+            # Direction matters. One more goal already scored makes an over
+            # line easier to reach, so a genuine reaction lowers the price. A
+            # rise is drift or an unrelated move and is not evidence of the
+            # bookmaker reacting to this goal.
+            if baseline - row["price"] >= MATERIAL_MOVE:
                 window = (parse(row["observed_at"]) - detected).total_seconds()
                 results.append({
-                    "bookmaker": bookmaker,
+                    "bookmaker": f"{bookmaker} @{point}",
                     "price_before": baseline,
                     "price_after": row["price"],
                     "move": round(row["price"] - baseline, 3),
@@ -145,7 +156,7 @@ def analyse_goal(goal, odds_rows):
                 break
         else:
             results.append({
-                "bookmaker": bookmaker,
+                "bookmaker": f"{bookmaker} @{point}",
                 "price_before": baseline,
                 "price_after": after[-1]["price"],
                 "move": round(after[-1]["price"] - baseline, 3),

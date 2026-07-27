@@ -12,14 +12,14 @@
 
 | term | coefficient |
 |---|---|
-| match_time_frac | +0.67472196 |
-| match_time_frac_sq | -0.41031588 |
-| abs_score_diff | +0.04718012 |
-| goals_so_far | -0.00778733 |
-| abs_red_diff | +0.00712885 |
-| shots_10m_total | +0.01012229 |
-| shots_on_target_10m_total | +0.01188892 |
-| corners_10m_total | -0.00102733 |
+| match_time_frac | +0.67472328 |
+| match_time_frac_sq | -0.41032089 |
+| abs_score_diff | +0.04717964 |
+| goals_so_far | -0.00778669 |
+| abs_red_diff | +0.00712882 |
+| shots_off_target_10m_total | +0.01012100 |
+| shots_on_target_10m_total | +0.02200916 |
+| corners_10m_total | -0.00102759 |
 
 ## Validation performance
 
@@ -55,11 +55,11 @@ Validation used the newest already-inspected season; the exported artifact is re
 
 | term | coefficient |
 |---|---|
-| match_time_frac | +0.67684117 |
-| match_time_frac_sq | -0.41846969 |
-| abs_score_diff | +0.02761169 |
-| goals_so_far | +0.00285013 |
-| abs_red_diff | -0.00901590 |
-| shots_10m_total | +0.01349523 |
-| shots_on_target_10m_total | -0.00312755 |
-| corners_10m_total | +0.00153454 |
+| match_time_frac | +0.67683102 |
+| match_time_frac_sq | -0.41846959 |
+| abs_score_diff | +0.02760680 |
+| goals_so_far | +0.00284950 |
+| abs_red_diff | -0.00901633 |
+| shots_off_target_10m_total | +0.01349101 |
+| shots_on_target_10m_total | +0.01036422 |
+| corners_10m_total | +0.00153252 |

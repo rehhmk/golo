@@ -17,6 +17,16 @@ type Reducer struct {
 	// prevStats holds the last cumulative statistics seen per match, so
 	// ApplySnapshot can recover what happened between two polls by diffing.
 	prevStats map[string]statBaseline
+
+	// pendingRetraction tracks a lower score the feed has started reporting
+	// but has not yet repeated often enough to be believed.
+	pendingRetraction map[string]retraction
+}
+
+// retraction is a proposed score decrease awaiting confirmation.
+type retraction struct {
+	score domain.ScoreState
+	count int
 }
 
 // statBaseline is the previous poll's cumulative statistics for one match.
@@ -28,8 +38,9 @@ type statBaseline struct {
 // NewReducer initializes a new Reducer instance.
 func NewReducer() *Reducer {
 	return &Reducer{
-		events:    make(map[string][]domain.MatchEvent),
-		prevStats: make(map[string]statBaseline),
+		events:            make(map[string][]domain.MatchEvent),
+		prevStats:         make(map[string]statBaseline),
+		pendingRetraction: make(map[string]retraction),
 	}
 }
 
@@ -192,7 +203,7 @@ func (r *Reducer) ApplySnapshot(state domain.MatchState, snap domain.LiveSnapsho
 	// Only overwrite the reduced score when the provider actually reports one,
 	// otherwise an event-driven feed's tally would be zeroed on every poll.
 	if snap.HasScore {
-		newState.Score = snap.Score
+		newState.Score = r.stableScore(snap.MatchID, newState.Score, snap.Score)
 	}
 
 	if snap.HasStats {
@@ -202,6 +213,47 @@ func (r *Reducer) ApplySnapshot(state domain.MatchState, snap domain.LiveSnapsho
 	newState.Windows = r.calculateRollingWindows(newState.MatchID, newState.ClockSeconds, newState.HomeTeamID)
 
 	return newState
+}
+
+// scoreRetractionsToConfirm is how many consecutive polls must agree before a
+// score is allowed to go down.
+//
+// Feeds flap. Over one Brasileirão match this ingested 0-1, 1-1, 0-1, 1-1,
+// 0-1, 1-1 — six transitions for two actual goals. Applied literally that
+// makes the published probability jump on goals that never happened, and
+// would fire a Telegram alert for each phantom one.
+//
+// The handling is deliberately asymmetric. A score going up is taken at once:
+// goals are the event the feed exists to report, and delaying them would make
+// every prediction stale exactly when it matters. A score going down is the
+// suspicious direction — goals are rarely un-scored, and when they are (a VAR
+// disallowance) the correction is not urgent, so waiting for agreement costs
+// nothing and rejects the noise.
+const scoreRetractionsToConfirm = 3
+
+// stableScore filters feed flapping out of the score.
+func (r *Reducer) stableScore(matchID string, current, reported domain.ScoreState) domain.ScoreState {
+	if reported.Home >= current.Home && reported.Away >= current.Away {
+		delete(r.pendingRetraction, matchID)
+		return reported
+	}
+
+	// Reported fewer goals than we already have. Only accept once the same
+	// lower score has been reported repeatedly.
+	pending, ok := r.pendingRetraction[matchID]
+	if !ok || pending.score != reported {
+		r.pendingRetraction[matchID] = retraction{score: reported, count: 1}
+		return current
+	}
+
+	pending.count++
+	if pending.count < scoreRetractionsToConfirm {
+		r.pendingRetraction[matchID] = pending
+		return current
+	}
+
+	delete(r.pendingRetraction, matchID)
+	return reported
 }
 
 // applyStatDeltas turns the increase in each cumulative statistic since the
@@ -352,6 +404,7 @@ func (r *Reducer) calculateRollingWindows(matchID string, currentSecond int, hom
 func (r *Reducer) Reset(matchID string) {
 	delete(r.events, matchID)
 	delete(r.prevStats, matchID)
+	delete(r.pendingRetraction, matchID)
 }
 
 var _ = time.Now

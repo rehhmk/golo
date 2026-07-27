@@ -185,3 +185,77 @@ func TestApplySnapshotWithScoreOverridesReducedScore(t *testing.T) {
 		t.Fatalf("Score.Away = %d, want 2 from the authoritative snapshot", state.Score.Away)
 	}
 }
+
+func scoreSnapshot(clock, home, away int) domain.LiveSnapshot {
+	return domain.LiveSnapshot{
+		MatchID:      "m1",
+		Status:       domain.MatchStatusLive,
+		ClockSeconds: clock,
+		HasScore:     true,
+		Score:        domain.ScoreState{Home: home, Away: away},
+	}
+}
+
+// A goal is the event the feed exists to report, so it is taken at once.
+// Delaying it would leave the probability stale exactly when it matters most.
+func TestScoreIncreaseIsAcceptedImmediately(t *testing.T) {
+	red := NewReducer()
+	state := newTestState()
+
+	state = red.ApplySnapshot(state, scoreSnapshot(600, 0, 0))
+	state = red.ApplySnapshot(state, scoreSnapshot(660, 0, 1))
+
+	if state.Score.Away != 1 {
+		t.Fatalf("Score = %+v, want the goal applied on the first report", state.Score)
+	}
+}
+
+// The real sequence ingested from one Brasileirão match: the feed alternated
+// between 0-1 and 1-1 six times for two actual goals. Taken literally that
+// republishes a goal that never happened, over and over.
+func TestFlappingFeedDoesNotUnscoreAGoal(t *testing.T) {
+	red := NewReducer()
+	state := newTestState()
+
+	state = red.ApplySnapshot(state, scoreSnapshot(420, 0, 1))
+	state = red.ApplySnapshot(state, scoreSnapshot(600, 1, 1))
+
+	// The feed now flaps back and forth. The score must hold at 1-1.
+	for _, s := range []struct{ home, away int }{{0, 1}, {1, 1}, {0, 1}, {1, 1}} {
+		state = red.ApplySnapshot(state, scoreSnapshot(700, s.home, s.away))
+		if state.Score.Home != 1 || state.Score.Away != 1 {
+			t.Fatalf("flap to %d-%d moved the score to %+v", s.home, s.away, state.Score)
+		}
+	}
+}
+
+// A genuine VAR disallowance is not urgent, so it is accepted once the feed
+// has repeated it enough to be believed rather than rejected forever.
+func TestSustainedRetractionIsEventuallyAccepted(t *testing.T) {
+	red := NewReducer()
+	state := newTestState()
+
+	state = red.ApplySnapshot(state, scoreSnapshot(600, 1, 1))
+	for i := 0; i < scoreRetractionsToConfirm; i++ {
+		state = red.ApplySnapshot(state, scoreSnapshot(660+i*60, 0, 1))
+	}
+
+	if state.Score.Home != 0 || state.Score.Away != 1 {
+		t.Fatalf("Score = %+v, want the sustained correction accepted", state.Score)
+	}
+}
+
+// A retraction that keeps changing its mind is noise, not a correction.
+func TestInconsistentRetractionsNeverAccumulate(t *testing.T) {
+	red := NewReducer()
+	state := newTestState()
+
+	state = red.ApplySnapshot(state, scoreSnapshot(600, 2, 2))
+	for _, s := range []struct{ home, away int }{{1, 2}, {2, 1}, {1, 2}, {2, 1}, {1, 2}} {
+		state = red.ApplySnapshot(state, scoreSnapshot(700, s.home, s.away))
+	}
+
+	if state.Score.Home != 2 || state.Score.Away != 2 {
+		t.Fatalf("Score = %+v, want it held while the feed disagrees with itself", state.Score)
+	}
+}

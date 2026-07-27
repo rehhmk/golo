@@ -73,11 +73,19 @@ RAW_SCHEMA = "v2-timeline"
 # matching internal/reducer, where EventShotOnTarget satisfies both
 # IsShotEvent() and IsOnTarget().
 ACTIVITY_KINDS = {
-    "SHOT_ON_TARGET": ("shots_10m_total", "shots_on_target_10m_total"),
-    "SHOT_OFF_TARGET": ("shots_10m_total",),
-    "SHOT_BLOCKED": ("shots_10m_total",),
+    "SHOT_ON_TARGET": ("shots_on_target_10m_total",),
+    "SHOT_OFF_TARGET": ("shots_off_target_10m_total",),
+    "SHOT_BLOCKED": ("shots_off_target_10m_total",),
     "CORNER": ("corners_10m_total",),
 }
+
+# The shot counters are deliberately disjoint. Counting an on-target shot in
+# both a total and an on-target column made the two columns correlate at 0.61,
+# and the fit responded by splitting the effect between them with opposite
+# signs: shots +0.0135 and shots_on_target -0.0031. Read literally the model
+# then claimed a shot on target raises the goal rate *less* than a shot that
+# missed, which is not a finding about football but an artifact of asking a
+# regression to attribute one event to two overlapping variables.
 
 # Dangerous attacks are deliberately absent: SportMonks publishes them only as
 # a cumulative fixture statistic, never as a timestamped timeline entry, so no
