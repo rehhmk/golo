@@ -364,9 +364,9 @@ def coefficient_stability(df, activity_features, draws=8, seed=11):
             continue
         low, high = min(values), max(values)
         report[name] = {
-            "min": low,
-            "max": high,
-            "sign_stable": (low > 0) == (high > 0),
+            "min": float(low),
+            "max": float(high),
+            "sign_stable": bool((low > 0) == (high > 0)),
         }
     return report
 
@@ -615,8 +615,8 @@ def main():
         )
 
     artifact = {
-        "modelVersion": "hazard_v1.2.0",
-        "featureVersion": "v1.2.0",
+        "modelVersion": "hazard_v1.3.0",
+        "featureVersion": "v1.3.0",
         "modelType": "poisson_hazard",
         "baseGoalsPer90": round(final_base, 6),
         "competitionBaseGoalsPer90": competition_rates,
@@ -646,7 +646,9 @@ def main():
                 name: {
                     "min": round(s["min"], 8),
                     "max": round(s["max"], 8),
-                    "signStable": s["sign_stable"],
+                    # numpy returns its own bool type from a comparison, which the
+            # json module refuses to encode.
+            "signStable": bool(s["sign_stable"]),
                 }
                 for name, s in stability.items()
             },

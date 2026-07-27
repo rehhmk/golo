@@ -1,25 +1,30 @@
 {
-  "modelVersion": "hazard_v1.2.0",
-  "featureVersion": "v1.2.0",
+  "modelVersion": "hazard_v1.3.0",
+  "featureVersion": "v1.3.0",
   "modelType": "poisson_hazard",
-  "baseGoalsPer90": 1.96399,
+  "baseGoalsPer90": 2.019465,
   "competitionBaseGoalsPer90": {
+    "2": 2.750859,
+    "5": 2.574741,
+    "271": 2.84171,
     "648": 2.208851,
     "743": 2.489793,
     "779": 2.763801,
-    "1122": 2.122811
+    "1122": 2.122811,
+    "1328": 2.28,
+    "2286": 2.458885
   },
   "coefficients": {
-    "match_time_frac": 0.67683102,
-    "match_time_frac_sq": -0.41846959,
-    "abs_score_diff": 0.0276068,
-    "goals_so_far": 0.0028495
+    "match_time_frac": 0.73426855,
+    "match_time_frac_sq": -0.5000783,
+    "abs_score_diff": 0.02681447,
+    "goals_so_far": 0.01280236
   },
-  "redCardCoefficient": -0.00901633,
+  "redCardCoefficient": 0.07434327,
   "activityCoefficients": {
-    "shots_off_target_10m_total": 0.01349101,
-    "shots_on_target_10m_total": 0.01036422,
-    "corners_10m_total": 0.00153252,
+    "shots_off_target_10m_total": 0.00396381,
+    "shots_on_target_10m_total": 0.00684322,
+    "corners_10m_total": 0.02332933,
     "dangerous_attacks_10m_total": 0.008,
     "xg_10m_total": 0.9
   },
@@ -33,32 +38,74 @@
   "minMultiplier": 0.25,
   "maxMultiplier": 4.0,
   "trainedUntil": "2026-07-26",
-  "trainingMatches": 3177,
+  "trainingMatches": 10886,
   "validation": {
-    "validationMatches": 584,
-    "holdoutMatches": 584,
-    "baselineGoalsPer90": 2.47309534,
-    "oneGoalBrier": 0.15036435,
-    "oneGoalBaselineBrier": 0.1504245,
-    "twoGoalBrier": 0.18011706,
-    "twoGoalBaselineBrier": 0.17860039,
+    "validationMatches": 751,
+    "holdoutMatches": 751,
+    "baselineGoalsPer90": 2.57101099,
+    "oneGoalBrier": 0.15095894,
+    "oneGoalBaselineBrier": 0.15098791,
+    "twoGoalBrier": 0.17904068,
+    "twoGoalBaselineBrier": 0.17816361,
     "oneGoalQualified": false,
     "twoGoalQualified": false,
+    "coefficientStability": {
+      "match_time_frac": {
+        "min": 0.69153624,
+        "max": 0.79653698,
+        "signStable": true
+      },
+      "match_time_frac_sq": {
+        "min": -0.55404324,
+        "max": -0.45531838,
+        "signStable": true
+      },
+      "abs_score_diff": {
+        "min": 0.02203166,
+        "max": 0.03308748,
+        "signStable": true
+      },
+      "goals_so_far": {
+        "min": 0.00712514,
+        "max": 0.01324606,
+        "signStable": true
+      },
+      "abs_red_diff": {
+        "min": 0.06777643,
+        "max": 0.11111998,
+        "signStable": true
+      },
+      "shots_off_target_10m_total": {
+        "min": -0.00189989,
+        "max": 0.00586322,
+        "signStable": false
+      },
+      "shots_on_target_10m_total": {
+        "min": 0.00587372,
+        "max": 0.01917188,
+        "signStable": true
+      },
+      "corners_10m_total": {
+        "min": 0.02039486,
+        "max": 0.02860734,
+        "signStable": true
+      }
+    },
     "brierAdvantage": {
       "ft": {
-        "meanDelta": -6.553e-05,
-        "ci95Low": -0.00102485,
-        "ci95High": 0.00085288,
+        "meanDelta": -4.921e-05,
+        "ci95Low": -0.00095784,
+        "ci95High": 0.00081971,
         "clusteredByMatch": true
       },
       "two_ft": {
-        "meanDelta": 0.00149119,
-        "ci95Low": -0.00021809,
-        "ci95High": 0.00313975,
+        "meanDelta": 0.00085389,
+        "ci95Low": -0.00070815,
+        "ci95High": 0.00235173,
         "clusteredByMatch": true
       }
     }
   },
-  "notes": "Base rate and the match_second / abs_score_diff / goals_so_far / red-card terms are fitted by Poisson regression on 3177 historical matches, validated on the already-inspected most-recent season per league. Activity coefficients were fitted from timestamped timeline events in 3177 matches. These remain documented priors because they are constant in the training data and cannot be fitted: dangerous_attacks_10m_total, xg_10m_total. Activity values are centered so ordinary activity leaves the fitted intensity unchanged. xG remains zero when unavailable.",
-  "sha256": "0f543b7abeb4f26ce9da57042d519bfad260b6159ee1ec19cc2192dc8d5bf97c"
+  "notes": "Base rate and the match_second / abs_score_diff / goals_so_far / red-card terms are fitted by Poisson regression on 10886 historical matches, validated on the already-inspected most-recent season per league. Activity coefficients were fitted from timestamped timeline events in 10886 matches. These remain documented priors because they are constant in the training data and cannot be fitted: dangerous_attacks_10m_total, xg_10m_total. Activity values are centered so ordinary activity leaves the fitted intensity unchanged. xG remains zero when unavailable.",
+  "sha256": "84911fa5d58a4b651372026883255aee2aa9b4cded1d05db78052a6b6e416581"
 }
