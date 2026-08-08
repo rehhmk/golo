@@ -10,6 +10,25 @@ interface MatchDetailProps {
   onBack: () => void;
 }
 
+// The badge printed LIVE unconditionally, so a finished or paused match still
+// claimed to be in progress.
+function statusLabel(status: string): string {
+  switch (status) {
+    case 'LIVE':
+      return 'AO VIVO';
+    case 'HALF_TIME':
+      return 'INTERVALO';
+    case 'PAUSED':
+      return 'PARADO';
+    case 'FINISHED':
+      return 'ENCERRADO';
+    case 'STALE':
+      return 'SEM DADOS';
+    default:
+      return status;
+  }
+}
+
 export const MatchDetail: React.FC<MatchDetailProps> = ({ matchUpdate, predictionsHistory = [], onBack }) => {
   if (!matchUpdate) {
     return (
@@ -68,7 +87,7 @@ export const MatchDetail: React.FC<MatchDetailProps> = ({ matchUpdate, predictio
           <div className="flex-1 text-center md:text-left">
             <div className="flex items-center justify-center md:justify-start gap-2 mb-2">
               <span className="text-xs font-semibold text-rose-500 bg-rose-500/10 px-2.5 py-0.5 rounded-full border border-rose-500/20 font-mono">
-                LIVE {minute}'
+                {statusLabel(state.status)} {minute}'
               </span>
               <span className="text-xs text-slate-400 font-medium">{competitionLabel(state)}</span>
             </div>
@@ -105,7 +124,7 @@ export const MatchDetail: React.FC<MatchDetailProps> = ({ matchUpdate, predictio
             <span className="text-xs font-bold text-slate-200 flex items-center gap-1">
               <Flame className="w-3.5 h-3.5 text-emerald-400" /> Gol Próximos 10m
             </span>
-            <span className="font-mono text-xs text-emerald-400 font-bold">Horizonte Core</span>
+            <span className="font-mono text-xs text-emerald-400 font-bold">Principal</span>
           </div>
           <div className="font-mono text-4xl font-black text-emerald-400">{prob10m}%</div>
           <div className="w-full bg-slate-950 rounded-full h-2.5 mt-3 overflow-hidden border border-slate-800">
@@ -115,7 +134,7 @@ export const MatchDetail: React.FC<MatchDetailProps> = ({ matchUpdate, predictio
 
         <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
           <div className="flex justify-between items-center mb-2">
-            <span className="text-xs font-medium text-slate-400">Gol Até o Fim (FT)</span>
+            <span className="text-xs font-medium text-slate-400">Gol até o fim</span>
             <span className="font-mono text-xs text-slate-500">Jogo Completo</span>
           </div>
           <div className="font-mono text-3xl font-extrabold text-slate-200">{probFT}%</div>

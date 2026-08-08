@@ -210,14 +210,14 @@ export const EvaluationDashboard: React.FC<EvaluationDashboardProps> = ({ matche
       {/* Metric row — no cards, just a ruled grid */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-px bg-white/[0.06] border border-white/[0.06] rounded-md overflow-hidden mb-8">
         <Metric
-          label="Acerto geral"
+          label="Acerto"
           value={`${metrics.hitRatePct.toFixed(1)}%`}
           hint="Previsões de gol até o fim que acertaram"
           accent
         />
-        <Metric label="Brier score" value={metrics.brierScore.toFixed(3)} hint="Menor é melhor · baseline ~0.220" />
-        <Metric label="Log loss" value={metrics.logLoss.toFixed(3)} hint="Penalização de incerteza" />
-        <Metric label="ECE" value={`${(metrics.ece * 100).toFixed(1)}%`} hint="Desvio médio previsto vs. real" />
+        <Metric label="Brier score" value={metrics.brierScore.toFixed(3)} hint="Erro médio ao quadrado · menor é melhor" />
+        <Metric label="Log loss" value={metrics.logLoss.toFixed(3)} hint="Pune previsão confiante e errada" />
+        <Metric label="Calibração (ECE)" value={`${(metrics.ece * 100).toFixed(1)}%`} hint="Quanto o previsto se afasta do observado" />
       </div>
 
       {/* Calibration */}

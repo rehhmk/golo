@@ -38,7 +38,7 @@ func TestLockedTestAPISealsContractAndRedactsOutcomes(t *testing.T) {
 		ModelVersion: "model-v1", ModelSHA256: "model-sha",
 		FeatureVersion: "features-v1", OneGoalQualified: true,
 	}
-	server := NewServerWithAdmin(store, publisher.NewPublisher("", ""), nil, model.ModelVersion, AdminDependencies{
+	server := NewServerWithAdmin(store, publisher.NewPublisher("", ""), model.ModelVersion, AdminDependencies{
 		ModelContract: model,
 	})
 

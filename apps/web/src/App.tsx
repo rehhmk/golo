@@ -3,7 +3,6 @@ import { Navbar, ActiveTab } from './components/Navbar';
 import { LiveBoard } from './components/LiveBoard';
 import { ScenarioLab } from './components/ScenarioLab';
 import { MatchDetail } from './components/MatchDetail';
-import { ReplayControl } from './components/ReplayControl';
 import { EvaluationDashboard } from './components/EvaluationDashboard';
 import { HowItWorks } from './components/HowItWorks';
 import { StrategyLab } from './components/StrategyLab';
@@ -103,14 +102,6 @@ export const App: React.FC = () => {
       .catch(() => {});
   };
 
-  const handleReplayAction = (action: string, speed?: string) => {
-    fetch(`${API_BASE_URL}/api/replay/control`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action, speed }),
-    }).catch(() => {});
-  };
-
   const selectedMatchUpdate = matches.find((m) => m.state.matchId === selectedMatchId) || matches[0];
 
   return (
@@ -134,19 +125,6 @@ export const App: React.FC = () => {
             predictionsHistory={predictionsHistory}
             onBack={() => setActiveTab('live')}
           />
-        )}
-
-        {activeTab === 'replay' && (
-          <div className="space-y-6">
-            <ReplayControl onControlAction={handleReplayAction} />
-            <LiveBoard
-            matches={matches}
-            onSelectMatch={handleSelectMatch}
-            probHistory={probHistory}
-            hasLoaded={hasLoadedMatches}
-            isConnected={isLiveConnected}
-          />
-          </div>
         )}
 
         {activeTab === 'howitworks' && <HowItWorks />}
