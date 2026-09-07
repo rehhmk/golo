@@ -125,7 +125,7 @@ func main() {
 	addr := fmt.Sprintf(":%s", cfg.Port)
 
 	admin := adminauth.New(cfg.AdminPasswordHash, cfg.AdminSessionSecret, 8*time.Hour)
-	server := api.NewServerWithAdmin(store, pub, nil, predEngine.ModelVersion(), api.AdminDependencies{
+	server := api.NewServerWithAdmin(store, pub, predEngine.ModelVersion(), api.AdminDependencies{
 		Auth: admin, Telegram: tg, SignalEngine: signalEngine,
 		DatasetPath: cfg.HistoricalDatasetPath, AllowedOrigin: cfg.AllowedWebOrigin,
 		ProviderHealth: oddsMonitor.Health, ModelContract: modelContract,

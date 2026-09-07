@@ -23,7 +23,7 @@ func TestAdminEndpointsRequireShortLivedBearerSession(t *testing.T) {
 	defer store.Close()
 	hash, _ := bcrypt.GenerateFromPassword([]byte("secret"), bcrypt.MinCost)
 	auth := adminauth.New(string(hash), "01234567890123456789012345678901", time.Hour)
-	server := NewServerWithAdmin(store, publisher.NewPublisher("", ""), nil, "test", AdminDependencies{
+	server := NewServerWithAdmin(store, publisher.NewPublisher("", ""), "test", AdminDependencies{
 		Auth: auth, AllowedOrigin: "https://golo.example",
 		ProviderHealth: func() any { return map[string]any{"healthy": true} },
 	})

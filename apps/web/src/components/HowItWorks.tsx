@@ -11,6 +11,90 @@ const PIPELINE_STAGES = [
   { title: 'Publisher', desc: 'Publica estado e previsão para a interface.' },
 ];
 
+// Every number rendered anywhere in the product should be findable here. The
+// interface previously showed CA, ESC, VERM, pp and ECE with no expansion in
+// any screen, and the maths page explained the integral while defining none of
+// the words a reader actually meets.
+const GLOSSARY: { term: string; meaning: string }[] = [
+  {
+    term: 'no alvo',
+    meaning:
+      'Chutes que foram na direção do gol nos últimos 10 minutos, somando os dois times. É o indicador de ataque que mais se relaciona com gol na nossa medição.',
+  },
+  {
+    term: 'escanteios',
+    meaning: 'Escanteios nos últimos 10 minutos, somando os dois times.',
+  },
+  {
+    term: 'expulsão',
+    meaning:
+      'Há ao menos um jogador expulso em campo. Historicamente a taxa de gols sobe: 2,46 gols por 90 minutos sem expulsão, 2,59 com uma, 2,97 com duas.',
+  },
+  {
+    term: 'xG',
+    meaning:
+      'Gols esperados — uma medida da qualidade das finalizações, não só da quantidade. Aparece zerado porque não está disponível no nosso plano de dados atual.',
+  },
+  {
+    term: 'até o fim',
+    meaning:
+      'Probabilidade de sair pelo menos mais um gol entre agora e o apito final. Diminui conforme o tempo passa, porque sobra menos jogo.',
+  },
+  {
+    term: 'dados: bons / medianos / fracos',
+    meaning:
+      'Qualidade do que estamos recebendo do provedor nesta partida — atraso, campos faltando, placar inconsistente. Não é a confiança do modelo na previsão.',
+  },
+  {
+    term: 'acerto aqui',
+    meaning:
+      'Das nossas previsões de 10 minutos nesta partida que já se resolveram, quantas acertaram. Só aparece quando há previsões resolvidas suficientes.',
+  },
+  {
+    term: 'Em alta',
+    meaning: 'Filtro que mostra apenas partidas com 75% ou mais de chance de gol nos próximos 10 minutos.',
+  },
+  {
+    term: 'taxa base',
+    meaning:
+      'Com que frequência o desfecho acontece sem nenhuma condição — em qualquer partida, a qualquer momento. Um cenário que não supera a taxa base não está informando nada.',
+  },
+  {
+    term: 'odd mínima',
+    meaning:
+      'O preço abaixo do qual a aposta perde dinheiro no longo prazo. É 1 dividido pela taxa de acerto — e usamos o limite pessimista do intervalo, não a estimativa central.',
+  },
+  {
+    term: 'intervalo de confiança',
+    meaning:
+      'A faixa onde a taxa real provavelmente está. Com 50 observações a 50% de acerto, a taxa real fica entre 36% e 63% — por isso nunca mostramos uma taxa sem a faixa dela.',
+  },
+  {
+    term: 'pior sequência',
+    meaning:
+      'A maior sequência de perdas seguidas que esse cenário já teve no histórico. Observada, não estimada. É dela que sai o tamanho sugerido da entrada.',
+  },
+  {
+    term: 'Brier',
+    meaning:
+      'Erro médio ao quadrado das nossas probabilidades. Zero seria perfeito. Só faz sentido comparado a outro modelo — por isso mostramos sempre ao lado da taxa constante.',
+  },
+  {
+    term: 'log loss',
+    meaning: 'Outra medida de erro, que pune com mais força uma previsão confiante e errada.',
+  },
+  {
+    term: 'ECE',
+    meaning:
+      'Erro de calibração. Se dissermos 70% em cem situações, o esperado é acontecer em setenta delas. O ECE mede o quanto fugimos disso.',
+  },
+  {
+    term: 'pp',
+    meaning:
+      'Pontos percentuais. A diferença entre 40% e 45% é de 5 pontos percentuais — não de 5%, que seria bem menos.',
+  },
+];
+
 export const HowItWorks: React.FC = () => {
   return (
     <div className="max-w-3xl">
@@ -107,6 +191,21 @@ export const HowItWorks: React.FC = () => {
           calculá-la. Uma previsão de 70% com o feed atrasado não tem o mesmo peso de uma com dados em dia — por isso
           cada partida exibe sua banda de confiança ao lado do número.
         </Prose>
+      </Section>
+
+      <Section n="08" title="Glossário">
+        <Prose>
+          Toda palavra que aparece em algum número da tela está aqui. Se algo na
+          interface não estiver explicado nesta lista, é falha nossa.
+        </Prose>
+        <dl className="mt-4 space-y-3">
+          {GLOSSARY.map((entry) => (
+            <div key={entry.term} className="grid grid-cols-1 sm:grid-cols-[150px_minmax(0,1fr)] gap-1 sm:gap-4">
+              <dt className="font-mono text-[12px] text-slate-300">{entry.term}</dt>
+              <dd className="text-[13px] leading-relaxed text-slate-400">{entry.meaning}</dd>
+            </div>
+          ))}
+        </dl>
       </Section>
 
       <div className="mt-10 pt-5 border-t border-white/[0.08]">

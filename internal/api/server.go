@@ -17,18 +17,11 @@ import (
 	"github.com/enzotriches/golo/internal/telegram"
 )
 
-type ReplayController interface {
-	SetSpeed(speed string)
-	SetPaused(paused bool)
-	Reset()
-}
-
 type Server struct {
-	store      *eventstore.SQLiteStore
-	pub        *publisher.Publisher
-	replayCtrl ReplayController
-	mu         sync.RWMutex
-	liveCache  map[string]publisher.MatchUpdate
+	store     *eventstore.SQLiteStore
+	pub       *publisher.Publisher
+	mu        sync.RWMutex
+	liveCache map[string]publisher.MatchUpdate
 
 	// modelVersion scopes /api/metrics to the model actually running.
 	modelVersion   string
@@ -47,8 +40,8 @@ type Server struct {
 // loaded, so /api/metrics can report that model's own accuracy rather than a
 // blend of every version the database has ever seen. Empty means "evaluate
 // everything", which is only appropriate when no model is loaded.
-func NewServer(store *eventstore.SQLiteStore, pub *publisher.Publisher, replayCtrl ReplayController, modelVersion string) *Server {
-	return NewServerWithAdmin(store, pub, replayCtrl, modelVersion, AdminDependencies{})
+func NewServer(store *eventstore.SQLiteStore, pub *publisher.Publisher, modelVersion string) *Server {
+	return NewServerWithAdmin(store, pub, modelVersion, AdminDependencies{})
 }
 
 type AdminDependencies struct {
@@ -61,11 +54,10 @@ type AdminDependencies struct {
 	ModelContract  signals.ModelContract
 }
 
-func NewServerWithAdmin(store *eventstore.SQLiteStore, pub *publisher.Publisher, replayCtrl ReplayController, modelVersion string, deps AdminDependencies) *Server {
+func NewServerWithAdmin(store *eventstore.SQLiteStore, pub *publisher.Publisher, modelVersion string, deps AdminDependencies) *Server {
 	srv := &Server{
 		store:        store,
 		pub:          pub,
-		replayCtrl:   replayCtrl,
 		liveCache:    make(map[string]publisher.MatchUpdate),
 		modelVersion: modelVersion,
 		adminAuth:    deps.Auth, telegram: deps.Telegram, signalEngine: deps.SignalEngine,
@@ -93,7 +85,6 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/healthz", s.handleHealth)
 	mux.HandleFunc("/api/matches", s.handleMatches)
 	mux.HandleFunc("/api/matches/", s.handleMatchDetail)
-	mux.HandleFunc("/api/replay/control", s.handleReplayControl)
 	mux.HandleFunc("/api/metrics", s.handleMetrics)
 	mux.HandleFunc("/api/scenarios/backtest", s.handleScenarioBacktest)
 	mux.HandleFunc("/api/scenarios/dataset", s.handleScenarioDataset)
@@ -228,41 +219,6 @@ func (s *Server) handleMatchStream(w http.ResponseWriter, r *http.Request, match
 			}
 		}
 	}
-}
-
-func (s *Server) handleReplayControl(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	var req struct {
-		Action string `json:"action"` // "play", "pause", "speed", "reset"
-		Speed  string `json:"speed"`  // "1x", "10x", "max"
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid JSON", http.StatusBadRequest)
-		return
-	}
-
-	if s.replayCtrl != nil {
-		switch req.Action {
-		case "play":
-			s.replayCtrl.SetPaused(false)
-		case "pause":
-			s.replayCtrl.SetPaused(true)
-		case "speed":
-			s.replayCtrl.SetSpeed(req.Speed)
-		case "reset":
-			s.replayCtrl.Reset()
-		}
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"status": "ok",
-		"action": req.Action,
-	})
 }
 
 func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {

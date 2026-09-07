@@ -102,8 +102,8 @@ export const LiveBoard: React.FC<LiveBoardProps> = ({
   const hotCount = matches.filter((m) => m.prediction.probabilities.goalNext10m >= 0.75).length;
 
   const sortOptions: { key: typeof sortBy; label: string }[] = [
-    { key: 'prob', label: 'Probabilidade' },
-    { key: 'momentum', label: 'Momentum' },
+    { key: 'prob', label: 'Próximos 10 min' },
+    { key: 'momentum', label: 'Próximos 5 min' },
     { key: 'league', label: 'Competição' },
   ];
 
@@ -145,7 +145,7 @@ export const LiveBoard: React.FC<LiveBoardProps> = ({
               'font-mono text-[11px] uppercase tracking-wider px-2.5 py-1.5 rounded transition-colors',
               filterHotOnly ? 'text-emerald-400 bg-emerald-400/10' : 'text-slate-500 hover:text-slate-300'
             )}
-          >
+           title="Partidas com 75% ou mais de chance de gol nos próximos 10 minutos">
             Em alta
           </button>
           <span className="w-px h-3.5 bg-white/[0.08] mx-1.5" />
